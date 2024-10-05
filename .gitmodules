@@ -1,0 +1,6 @@
+[submodule "subprojects/stb"]
+	path = subprojects/stb
+	url = https://github.com/nothings/stb.git
+[submodule "subprojects/VulkanMemoryAllocator-Hpp"]
+	path = subprojects/VulkanMemoryAllocator-Hpp
+	url = https://github.com/YaaZ/VulkanMemoryAllocator-Hpp.git
