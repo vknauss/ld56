@@ -2,27 +2,92 @@
 
 #include <GLFW/glfw3.h>
 #include <glm/gtc/matrix_transform.hpp>
+#include <algorithm>
 #include <array>
 #include <deque>
 #include <map>
+#include <memory>
 #include <string_view>
+#include <typeinfo>
 #include <iostream>
-
-struct Cell
-{
-    bool solid = false;
-    uint32_t occupant;
-};
 
 enum class EntityType
 {
     Leader, Follower, Hostile,
 };
 
+struct ComponentArrayBase
+{
+    virtual ~ComponentArrayBase() = default;
+
+    virtual bool has(uint32_t) = 0;
+    virtual void remove(uint32_t) = 0;
+};
+
+template<typename ComponentType>
+struct ComponentArray : ComponentArrayBase
+{
+    std::vector<ComponentType> components;
+    std::vector<uint32_t> entities;
+    std::vector<uint32_t> indices;
+
+    bool has(uint32_t entity) override
+    {
+        return (indices.size() > entity && indices.at(entity) < components.size());
+    }
+
+    void remove(uint32_t entity) override
+    {
+        uint32_t& index = indices.at(entity);
+        components.at(index) = components.back();
+        entities.at(index) = entities.back();
+        indices.at(entities.at(index)) = index;
+        index = std::numeric_limits<uint32_t>::max();
+    }
+
+    ComponentType& get(uint32_t entity)
+    {
+        return components.at(indices.at(entity));
+    }
+
+    ComponentType& add(uint32_t entity)
+    {
+        if (indices.size() <= entity)
+        {
+            indices.resize(entity + 1, std::numeric_limits<uint32_t>::max());
+        }
+        indices.at(entity) = components.size();
+        entities.push_back(entity);
+        return components.emplace_back();
+    }
+
+    template<typename Callable>
+    void forEach(Callable&& fn)
+    {
+        for (uint32_t i = 0; i < components.size(); ++i)
+        {
+            fn(components.at(i), entities.at(i));
+        }
+    }
+};
+
 struct Entity
 {
+    constexpr static uint32_t Invalid = std::numeric_limits<uint32_t>::max();
     uint32_t x, y;
-    EntityType type;
+    bool alive;
+};
+
+struct Sprite
+{
+    uint32_t textureIndex;
+    glm::vec4 color;
+};
+
+struct Cell
+{
+    bool solid = false;
+    std::vector<uint32_t> occupants;
 };
 
 struct Map
@@ -30,7 +95,7 @@ struct Map
     std::vector<std::vector<Cell>> cells;
 };
 
-enum class InputEvent
+enum class Direction
 {
     Up, Left, Down, Right,
 };
@@ -38,8 +103,16 @@ enum class InputEvent
 struct Enemy
 {
     uint32_t entity;
-    std::vector<std::pair<uint32_t, uint32_t>> trackPoints;
-    uint32_t currentTrackPoint;
+    std::pair<uint32_t, uint32_t> target;
+    Direction facingDirection;
+};
+
+struct Player {};
+struct Follower {};
+
+struct InputEvent
+{
+    Direction direction;
 };
 
 struct GameLogic final : eng::GameLogicInterface
@@ -49,39 +122,110 @@ struct GameLogic final : eng::GameLogicInterface
         uint32_t blank;
     } textures;
 
-    std::map<InputEvent, uint32_t> inputMappings;
+    std::map<Direction, uint32_t> directionInputMappings;
+
+    std::map<size_t, std::unique_ptr<ComponentArrayBase>> componentArrays;
 
     Map map;
     std::vector<Entity> entities;
+    std::deque<uint32_t> freeEntities;
     std::vector<uint32_t> playerEntities;
-    std::vector<Enemy> enemies;
+    // std::vector<Enemy> enemies;
+    std::vector<std::pair<uint32_t, uint32_t>> patrolPoints;
 
     double tickTimer = 0;
     static constexpr double tickInterval = 0.5;
     std::deque<InputEvent> inputQueue;
 
-    void initPlayer(const std::initializer_list<std::pair<uint32_t, uint32_t>>& positions)
+    template<typename ComponentType>
+    ComponentArray<ComponentType>& component()
     {
-        playerEntities.reserve(positions.size());
-        EntityType type = EntityType::Leader;
-        for (const auto& [x, y] : positions)
+        auto typeHash = typeid(ComponentType).hash_code();
+        auto it = componentArrays.find(typeHash);
+        if (it == componentArrays.end())
         {
-            map.cells[y][x].occupant = entities.size();
-            playerEntities.push_back(entities.size());
-            entities.push_back(Entity{ .x = x, .y = y, .type = type });
-            type = EntityType::Follower;
+            bool inserted;
+            std::tie(it, inserted) = componentArrays.emplace(typeHash, std::make_unique<ComponentArray<ComponentType>>());
+            if (!inserted)
+            {
+                throw std::runtime_error("Failed to insert component type");
+            }
+        }
+        return static_cast<ComponentArray<ComponentType>&>(*it->second);
+    }
+
+    uint32_t createEntity(uint32_t x, uint32_t y)
+    {
+        uint32_t index;
+        if (!freeEntities.empty())
+        {
+            index = freeEntities.front();
+            freeEntities.pop_front();
+        }
+        else
+        {
+            index = entities.size();
+            entities.emplace_back();
+        }
+        entities.at(index) = Entity{ .x = x, .y = y, .alive = true };
+        map.cells[y][x].occupants.push_back(index);
+        return index;
+    }
+
+    void destroyEntity(uint32_t index)
+    {
+        Entity& entity = entities.at(index);
+        if (entity.alive)
+        {
+            for (auto&& [_, componentArray] : componentArrays)
+            {
+                if (componentArray->has(index))
+                {
+                    componentArray->remove(index);
+                }
+            }
+
+            auto& cell = map.cells[entities[index].y][entities[index].x];
+            cell.occupants.erase(std::find(cell.occupants.begin(), cell.occupants.end(), index));
+
+            entity.alive = false;
+            freeEntities.push_back(index);
+        }
+        else
+        {
+            std::cerr << "entity already destroyed" << std::endl;
         }
     }
 
-    void createEnemy(uint32_t x, uint32_t y, const std::vector<std::pair<uint32_t, uint32_t>>& trackPoints)
+    void initPlayer(const std::initializer_list<std::pair<uint32_t, uint32_t>>& positions)
     {
-        map.cells[y][x].occupant = entities.size();
-        enemies.push_back(Enemy{
-                    .entity = static_cast<uint32_t>(entities.size()),
-                    .trackPoints = trackPoints,
-                    .currentTrackPoint = 0,
-                });
-        entities.push_back(Entity{ .x = x, .y = y, .type = EntityType::Hostile });
+        playerEntities.reserve(positions.size());
+        auto it = positions.begin();
+        if (it != positions.end())
+        {
+            auto&& [x, y] = *it;
+            uint32_t entity = createEntity(x, y);
+            playerEntities.push_back(entity);
+            component<Player>().add(entity);
+            component<Sprite>().add(entity) = { .textureIndex = textures.blank, .color = glm::vec4(1, 1, 0, 1) };
+            ++it;
+        }
+        for (; it != positions.end(); ++it)
+        {
+            auto&& [x, y] = *it;
+            uint32_t entity = createEntity(x, y);
+            playerEntities.push_back(entity);
+            component<Follower>().add(entity);
+            component<Sprite>().add(entity) = { .textureIndex = textures.blank, .color = glm::vec4(0, 1, 1, 1) };
+        }
+    }
+
+    // void createEnemy(uint32_t x, uint32_t y, const std::vector<std::pair<uint32_t, uint32_t>>& trackPoints)
+    void createEnemy(uint32_t x, uint32_t y, Direction facingDirection)
+    {
+        uint32_t entity = createEntity(x, y);
+        component<Enemy>().add(entity) = { .target = { x, y }, .facingDirection = facingDirection };
+        component<Sprite>().add(entity) = { .textureIndex = textures.blank, .color = glm::vec4(1, 0, 0, 1) };
     }
 
     void init(eng::ResourceLoaderInterface& resourceLoader, eng::SceneInterface& scene, eng::InputInterface& input) override
@@ -117,6 +261,9 @@ struct GameLogic final : eng::GameLogicInterface
                     case 'X':
                         map.cells[row][col].solid = true;
                         break;
+                    case 'T':
+                        patrolPoints.push_back({ col, row });
+                        break;
                     case '_':
                         break;
                     default:
@@ -135,19 +282,20 @@ struct GameLogic final : eng::GameLogicInterface
         {
             for (auto&& [x, y] : it->second)
             {
-                createEnemy(x, y, { {x, y+1}, {x-2, y+1}, {x-2, y-1}, {x, y-1} });
+                // createEnemy(x, y, { {x, y+1}, {x-2, y+1}, {x-2, y-1}, {x, y-1} });
+                createEnemy(x, y, Direction::Down);
             }
         }
 
-        inputMappings[InputEvent::Up] = input.createMapping();
-        inputMappings[InputEvent::Left] = input.createMapping();
-        inputMappings[InputEvent::Down] = input.createMapping();
-        inputMappings[InputEvent::Right] = input.createMapping();
+        directionInputMappings[Direction::Up] = input.createMapping();
+        directionInputMappings[Direction::Left] = input.createMapping();
+        directionInputMappings[Direction::Down] = input.createMapping();
+        directionInputMappings[Direction::Right] = input.createMapping();
 
-        input.mapKey(inputMappings[InputEvent::Up], glfwGetKeyScancode(GLFW_KEY_W));
-        input.mapKey(inputMappings[InputEvent::Left], glfwGetKeyScancode(GLFW_KEY_A));
-        input.mapKey(inputMappings[InputEvent::Down], glfwGetKeyScancode(GLFW_KEY_S));
-        input.mapKey(inputMappings[InputEvent::Right], glfwGetKeyScancode(GLFW_KEY_D));
+        input.mapKey(directionInputMappings[Direction::Up], glfwGetKeyScancode(GLFW_KEY_W));
+        input.mapKey(directionInputMappings[Direction::Left], glfwGetKeyScancode(GLFW_KEY_A));
+        input.mapKey(directionInputMappings[Direction::Down], glfwGetKeyScancode(GLFW_KEY_S));
+        input.mapKey(directionInputMappings[Direction::Right], glfwGetKeyScancode(GLFW_KEY_D));
 
         scene.projection() = glm::orthoLH_ZO(0.0f, 40.0f, 24.0f, 0.0f, 0.0f, 1.0f);
     }
@@ -160,18 +308,18 @@ struct GameLogic final : eng::GameLogicInterface
             inputQueue.pop_front();
 
             int dx = 0, dy = 0;
-            switch (event)
+            switch (event.direction)
             {
-                case InputEvent::Up:
+                case Direction::Up:
                     dy = -1;
                     break;
-                case InputEvent::Left:
+                case Direction::Left:
                     dx = -1;
                     break;
-                case InputEvent::Down:
+                case Direction::Down:
                     dy = 1;
                     break;
-                case InputEvent::Right:
+                case Direction::Right:
                     dx = 1;
                     break;
             }
@@ -210,14 +358,17 @@ struct GameLogic final : eng::GameLogicInterface
             }
         }
 
-        for (auto& enemy : enemies)
-        {
-            auto& entity = entities[enemy.entity];
-            auto [px, py] = enemy.trackPoints[enemy.currentTrackPoint];
+        component<Enemy>().forEach([this](Enemy& enemy, uint32_t id) {
+            auto& entity = entities.at(id);                    
+            auto [px, py] = enemy.target;
             if (entity.x == px && entity.y == py)
             {
-                enemy.currentTrackPoint = (enemy.currentTrackPoint + 1) % enemy.trackPoints.size();
-                std::tie(px, py) = enemy.trackPoints[enemy.currentTrackPoint];
+                bool foundTarget = false;
+                uint32_t targetIndex = 0;
+                for (uint32_t i = 0; i < patrolPoints.size(); ++i)
+                {
+
+                }
             }
 
             int dx = (int)px - (int)entity.x, dy = (int)py - (int)entity.y;
@@ -234,16 +385,16 @@ struct GameLogic final : eng::GameLogicInterface
 
             entity.x += dx;
             entity.y += dy;
-        }
+        });
     }
 
     void runFrame(eng::SceneInterface& scene, eng::InputInterface& input, const double deltaTime) override
     {
-        for (auto&& [ event, mapping ] : inputMappings)
+        for (auto&& [ direction, mapping ] : directionInputMappings)
         {
             if (input.getBoolean(mapping, eng::InputInterface::BoolStateEvent::Pressed))
             {
-                inputQueue.push_back(event);
+                inputQueue.push_back(InputEvent { direction });
             }
         }
 
@@ -271,31 +422,16 @@ struct GameLogic final : eng::GameLogicInterface
             }
         }
 
-        for (const auto& entity : entities)
+        component<Sprite>().forEach([&](const auto& sprite, auto& id)
         {
-            glm::vec4 color;
-            uint32_t textureIndex = textures.blank;
-            switch (entity.type)
-            {
-                case EntityType::Leader:
-                    color = glm::vec4(1, 1, 0, 1);
-                    break;
-                case EntityType::Follower:
-                    color = glm::vec4(0, 1, 1, 1);
-                    break;
-                case EntityType::Hostile:
-                    color = glm::vec4(1, 0, 0, 1);
-                    break;
-            }
-
+            const auto& entity = entities.at(id);
             scene.instances().push_back(eng::Instance {
                         .position = glm::vec2(1 + 2 * entity.x, 2 * (map.cells.size() - entity.y) - 1),
                         .scale = glm::vec2(1, 1),
-                        .textureIndex = textureIndex,
-                        .tintColor = color,
+                        .textureIndex = sprite.textureIndex,
+                        .tintColor = sprite.color,
                     });
-        }
-
+        });
     }
 
     void cleanup() override
