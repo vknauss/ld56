@@ -11,10 +11,13 @@
 struct Cell
 {
     bool solid = false;
+    uint32_t occupant;
 };
 
 struct Entity
 {
+    uint32_t x, y;
+    bool hostile;
 };
 
 struct Map
@@ -43,9 +46,7 @@ struct GameLogic final : eng::GameLogicInterface
     double tickTimer = 0;
     static constexpr double tickInterval = 0.5;
 
-    struct {
-        uint32_t x = 5, y = 5;
-    } player;
+    std::vector<uint32_t> playerEntities;
 
     void init(eng::ResourceLoaderInterface& resourceLoader, eng::SceneInterface& scene, eng::InputInterface& input) override
     {
@@ -55,25 +56,42 @@ struct GameLogic final : eng::GameLogicInterface
         constexpr std::array mapRows {
             "XXXXXXXXXXXXXXXXXXXX"sv,
             "X__________________X"sv,
+            "X________X_________X"sv,
             "X__________________X"sv,
+            "X___X______________X"sv,
+            "X______________X___X"sv,
             "X__________________X"sv,
-            "X__________________X"sv,
-            "X__________________X"sv,
-            "X__________________X"sv,
-            "X__________________X"sv,
-            "X__________________X"sv,
-            "X__________________X"sv,
+            "X________P_________X"sv,
+            "X________P_________X"sv,
+            "X________P_________X"sv,
             "X__________________X"sv,
             "XXXXXXXXXXXXXXXXXXXX"sv,
         };
 
-        map.cells.reserve(mapRows.size());
-        for (const auto& row : mapRows)
+        map.cells.resize(mapRows.size());
+        for (uint32_t row = 0; row < mapRows.size(); ++row)
         {
-            auto& cellsRow = map.cells.emplace_back(row.size());
-            for (uint32_t i = 0; i < row.size(); ++i)
+            map.cells[row].resize(mapRows[row].size());
+            for (uint32_t col = 0; col < mapRows[row].size(); ++col)
             {
-                cellsRow[i].solid = row[i] == 'X';
+                map.cells[row][col] = Cell {};
+                switch (mapRows[row][col])
+                {
+                    case 'X':
+                        map.cells[row][col].solid = true;
+                        break;
+                    case 'E':
+                        map.cells[row][col].occupant = entities.size();
+                        entities.push_back(Entity { .x = col, .y = row, .hostile = true });
+                        break;
+                    case 'P':
+                        map.cells[row][col].occupant = entities.size();
+                        playerEntities.push_back(entities.size());
+                        entities.push_back(Entity { .x = col, .y = row, .hostile = false });
+                        break;
+                    default:
+                        break;
+                }
             }
         }
 
@@ -114,27 +132,37 @@ struct GameLogic final : eng::GameLogicInterface
                     break;
             }
 
-            if (dx < 0 && player.x == 0)
+            if (!playerEntities.empty())
             {
-                dx = 0;
-            }
-            if (dx > 0 && player.x == map.cells[0].size() - 1)
-            {
-                dx = 0;
-            }
-            if (dy < 0 && player.y == 0)
-            {
-                dy = 0;
-            }
-            if (dy > 0 && player.y == map.cells.size() - 1)
-            {
-                dy = 0;
-            }
+                Entity& player = entities[playerEntities.front()];
+                if (dx < 0 && player.x == 0)
+                {
+                    dx = 0;
+                }
+                if (dx > 0 && player.x == map.cells[0].size() - 1)
+                {
+                    dx = 0;
+                }
+                if (dy < 0 && player.y == 0)
+                {
+                    dy = 0;
+                }
+                if (dy > 0 && player.y == map.cells.size() - 1)
+                {
+                    dy = 0;
+                }
 
-            if (!map.cells[player.y + dy][player.x + dx].solid)
-            {
-                player.x += dx;
-                player.y += dy;
+                if (!map.cells[player.y + dy][player.x + dx].solid)
+                {
+                    for (uint32_t i = playerEntities.size() - 1; i > 0; --i)
+                    {
+                        entities[playerEntities[i]].x = entities[playerEntities[i - 1]].x;
+                        entities[playerEntities[i]].y = entities[playerEntities[i - 1]].y;
+                    }
+
+                    player.x += dx;
+                    player.y += dy;
+                }
             }
         }
     }
@@ -173,12 +201,16 @@ struct GameLogic final : eng::GameLogicInterface
             }
         }
 
-        scene.instances().push_back(eng::Instance {
-                    .position = glm::vec2(1 + 2 * player.x, 2 * (map.cells.size() - player.y) - 1),
-                    .scale = glm::vec2(1, 1),
-                    .textureIndex = textures.blank,
-                    .tintColor = glm::vec4(0, 1, 1, 1),
-                });
+        for (const auto& entity : entities)
+        {
+            scene.instances().push_back(eng::Instance {
+                        .position = glm::vec2(1 + 2 * entity.x, 2 * (map.cells.size() - entity.y) - 1),
+                        .scale = glm::vec2(1, 1),
+                        .textureIndex = textures.blank,
+                        .tintColor = entity.hostile ? glm::vec4(1, 0, 0, 1) : glm::vec4(0, 1, 1, 1),
+                    });
+        }
+
     }
 
     void cleanup() override
