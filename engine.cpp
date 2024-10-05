@@ -7,6 +7,7 @@
 
 #include <GLFW/glfw3.h>
 #include <glm/glm.hpp>
+#include <iostream>
 #include <stdexcept>
 #include <sstream>
 #include <vector>
@@ -140,7 +141,7 @@ static uint32_t getQueueFamilyIndex(const vk::raii::PhysicalDevice& physicalDevi
     throw std::runtime_error("No suitable queue family found");
 }
 
-static vk::raii::Device createDevice(const vk::raii::PhysicalDevice& physicalDevice, uint32_t queueFamilyIndex)
+static vk::raii::Device createDevice(const vk::raii::PhysicalDevice& physicalDevice, uint32_t queueFamilyIndex, bool& bindlessSupported)
 {
     const float queuePriority = 1.0f;
     const vk::DeviceQueueCreateInfo queueCreateInfo {
@@ -149,57 +150,36 @@ static vk::raii::Device createDevice(const vk::raii::PhysicalDevice& physicalDev
         .pQueuePriorities = &queuePriority,
     };
 
-    // TODO: query extension support
-    const std::array deviceExtensions {
+    std::vector<const char*> deviceExtensions = {
         VK_KHR_SWAPCHAIN_EXTENSION_NAME,
-        "VK_KHR_portability_subset",
-        "VK_KHR_synchronization2",
-        "VK_KHR_dynamic_rendering",
+        VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME,
+        VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME,
     };
+
+    auto extensionProperties = physicalDevice.enumerateDeviceExtensionProperties();
+    for (const auto& properties : extensionProperties)
+    {
+        if (strcmp(properties.extensionName, "VK_KHR_portability_subset") == 0)
+        {
+            deviceExtensions.push_back(properties.extensionName);
+        }
+    }
+
+    const auto physicalDeviceFeaturesChain = physicalDevice.getFeatures2<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan12Features>();
+    const auto& physicalDeviceVulkan12Features = physicalDeviceFeaturesChain.get<vk::PhysicalDeviceVulkan12Features>();
+    bindlessSupported = (physicalDeviceVulkan12Features.shaderSampledImageArrayNonUniformIndexing && physicalDeviceVulkan12Features.runtimeDescriptorArray);
 
     const vk::StructureChain deviceCreateInfoChain {
         vk::DeviceCreateInfo {
             .queueCreateInfoCount = 1,
             .pQueueCreateInfos = &queueCreateInfo,
-            .enabledExtensionCount = deviceExtensions.size(),
+            .enabledExtensionCount = static_cast<uint32_t>(deviceExtensions.size()),
             .ppEnabledExtensionNames = deviceExtensions.data(),
         },
         vk::PhysicalDeviceFeatures2 {},
         vk::PhysicalDeviceVulkan12Features {
-            .shaderSampledImageArrayNonUniformIndexing = vk::True,
-            .runtimeDescriptorArray = vk::True,
-            .timelineSemaphore = vk::True,
-        },
-        vk::PhysicalDeviceSynchronization2Features {
-            .synchronization2 = vk::True,
-        },
-        vk::PhysicalDeviceDynamicRenderingFeatures {
-            .dynamicRendering = vk::True,
-        },
-    };
-
-    return vk::raii::Device(physicalDevice, deviceCreateInfoChain.get<vk::DeviceCreateInfo>());
-}
-
-static vk::raii::Device createDeviceFallback(const vk::raii::PhysicalDevice& physicalDevice, uint32_t queueFamilyIndex)
-{
-    const float queuePriority = 1.0f;
-    const vk::DeviceQueueCreateInfo queueCreateInfo {
-        .queueFamilyIndex = queueFamilyIndex,
-        .queueCount = 1,
-        .pQueuePriorities = &queuePriority,
-    };
-    const std::array deviceExtensions { VK_KHR_SWAPCHAIN_EXTENSION_NAME };
-
-    const vk::StructureChain deviceCreateInfoChain {
-        vk::DeviceCreateInfo {
-            .queueCreateInfoCount = 1,
-            .pQueueCreateInfos = &queueCreateInfo,
-            .enabledExtensionCount = deviceExtensions.size(),
-            .ppEnabledExtensionNames = deviceExtensions.data(),
-        },
-        vk::PhysicalDeviceFeatures2 {},
-        vk::PhysicalDeviceVulkan12Features {
+            .shaderSampledImageArrayNonUniformIndexing = bindlessSupported ? vk::True : vk::False,
+            .runtimeDescriptorArray = bindlessSupported ? vk::True : vk::False,
             .timelineSemaphore = vk::True,
         },
         vk::PhysicalDeviceSynchronization2Features {
@@ -284,19 +264,8 @@ void eng::run(GameLogicInterface& gameLogic, const ApplicationInfo& applicationI
     const auto instance = createInstance(context, applicationInfo);
     const auto physicalDevice = getPhysicalDevice(instance);
     const auto queueFamilyIndex = getQueueFamilyIndex(physicalDevice, vk::QueueFlagBits::eGraphics | vk::QueueFlagBits::eCompute);
-
-    vk::raii::Device device = nullptr;
-    bool usingFallback = false;
-    try
-    {
-        device = createDevice(physicalDevice, queueFamilyIndex);
-    }
-    catch (const std::exception& exception)
-    {
-        device = createDeviceFallback(physicalDevice, queueFamilyIndex);    
-        usingFallback = true;
-    }
-
+    bool bindlessSupported;
+    const auto device = createDevice(physicalDevice, queueFamilyIndex, bindlessSupported);
     const auto queue = device.getQueue(queueFamilyIndex, 0);
     const auto allocator = vma::createAllocatorUnique(vma::AllocatorCreateInfo {
             .physicalDevice = *physicalDevice,
