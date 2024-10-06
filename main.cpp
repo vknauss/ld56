@@ -22,6 +22,8 @@ struct ComponentArrayBase
 
     virtual bool has(uint32_t) = 0;
     virtual void remove(uint32_t) = 0;
+    virtual void clear() = 0;
+    virtual void removeLater(uint32_t) = 0;
 };
 
 template<typename ComponentType>
@@ -30,6 +32,7 @@ struct ComponentArray : ComponentArrayBase
     std::vector<ComponentType> components;
     std::vector<uint32_t> entities;
     std::vector<uint32_t> indices;
+    std::vector<uint32_t> toRemove;
 
     bool has(uint32_t entity) override
     {
@@ -45,6 +48,18 @@ struct ComponentArray : ComponentArrayBase
         index = std::numeric_limits<uint32_t>::max();
         components.pop_back();
         entities.pop_back();
+    }
+
+    void clear() override
+    {
+        components.clear();
+        entities.clear();
+        indices.clear();
+    }
+
+    void removeLater(uint32_t id) override
+    {
+        toRemove.push_back(id);
     }
 
     ComponentType& get(uint32_t entity)
@@ -70,6 +85,11 @@ struct ComponentArray : ComponentArrayBase
         {
             fn(components.at(i), entities.at(i));
         }
+        for (auto id : toRemove)
+        {
+            remove(id);
+        }
+        toRemove.clear();
     }
 };
 
@@ -121,7 +141,10 @@ struct Leader
 
 struct Friendly {};
 
-struct Neutral {};
+struct Neutral
+{
+    uint32_t cooldown = 3;
+};
 
 struct PatrolPoint {};
 
@@ -698,6 +721,20 @@ struct GameLogic final : eng::GameLogicInterface
                 component<Sprite>().get(playerEntities[i]).textureIndex = textures.friendly.at(direction);
             }
         }
+
+        component<Neutral>().forEach([this](Neutral& neutral, uint32_t id)
+        {
+            if (neutral.cooldown == 0)
+            {
+                component<Enemy>().add(id);
+                component<Sprite>().get(id).color = { 1, 1, 1, 1 };
+                component<Neutral>().removeLater(id);
+            }
+            else
+            {
+                --neutral.cooldown;
+            }
+        });
 
         component<Enemy>().forEach([this](Enemy& enemy, uint32_t id)
         {
