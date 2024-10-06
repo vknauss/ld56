@@ -39,10 +39,12 @@ struct ComponentArray : ComponentArrayBase
     void remove(uint32_t entity) override
     {
         uint32_t& index = indices.at(entity);
-        components.at(index) = components.back();
+        components.at(index) = std::move(components.back());
         entities.at(index) = entities.back();
         indices.at(entities.at(index)) = index;
         index = std::numeric_limits<uint32_t>::max();
+        components.pop_back();
+        entities.pop_back();
     }
 
     ComponentType& get(uint32_t entity)
@@ -118,6 +120,8 @@ struct Leader
 };
 
 struct Friendly {};
+
+struct Neutral {};
 
 struct PatrolPoint {};
 
@@ -349,9 +353,7 @@ struct GameLogic final : eng::GameLogicInterface
                 break;
             }
 
-            if (auto it = std::find_if(cell.occupants.begin(), cell.occupants.end(), [&](auto oid) {
-                            return component<Friendly>().has(oid);
-                        });
+            if (auto it = std::find_if(cell.occupants.begin(), cell.occupants.end(), [&](auto oid) { return component<Friendly>().has(oid); });
                     it != cell.occupants.end())
             {
                 target = *it;
@@ -362,12 +364,34 @@ struct GameLogic final : eng::GameLogicInterface
 
         if (target != Entity::Invalid)
         {
-            if (enemy.state < Enemy::State::Attack)
+            if (enemy.state == Enemy::State::Attack)
+            {
+                enemy.state = Enemy::State::Alert;
+            }
+            else
             {
                 enemy.state = static_cast<Enemy::State>(static_cast<int>(enemy.state) + 1);
             }
+
             if (enemy.state == Enemy::State::Attack)
             {
+                if (auto it = std::find(playerEntities.begin(), playerEntities.end(), target); it != playerEntities.end())
+                {
+                    if (it == playerEntities.begin())
+                    {
+                        // dead?
+                    }
+                    else
+                    {
+                        for (auto tmp = it; tmp != playerEntities.end(); ++tmp)
+                        {
+                            component<Friendly>().remove(*tmp);
+                            component<Neutral>().add(*tmp);
+                            component<Sprite>().get(*tmp).color = { 1, 0, 1, 1 };
+                        }
+                        playerEntities.erase(it, playerEntities.end());
+                    }
+                }
             }
         }
         else
@@ -395,7 +419,6 @@ struct GameLogic final : eng::GameLogicInterface
                         auto [dx, dy] = directionCoords(enemy.facingDirection);
                         if (dx != glm::sign(toTargetX) || dy != glm::sign(toTargetY))
                         {
-                            std::cerr << "facing direction incorrect: to target: " << toTargetX << ", " << toTargetY << " direction: " << dx << ", " << dy << std::endl;
                             enemy.target = { std::numeric_limits<uint32_t>::max(), std::numeric_limits<uint32_t>::max() };
                         }
                         else
@@ -479,7 +502,8 @@ struct GameLogic final : eng::GameLogicInterface
             }
         }
 
-        component<Sprite>().get(id).textureIndex = textures.enemy.at(enemy.facingDirection);
+        auto& sprite = component<Sprite>().get(id);
+        sprite.textureIndex = textures.enemy.at(enemy.facingDirection);
     }
 
     void init(eng::ResourceLoaderInterface& resourceLoader, eng::SceneInterface& scene, eng::InputInterface& input) override
@@ -600,15 +624,65 @@ struct GameLogic final : eng::GameLogicInterface
                 auto [dx, dy] = directionCoords(event.direction);
                 clampDeltaToMap(player.x, player.y, dx, dy);
 
-                if (!map.cells[player.y + dy][player.x + dx].solid)
+                const auto& cell = map.cells[player.y + dy][player.x + dx];
+                if (!cell.solid)
                 {
-                    for (uint32_t i = playerEntities.size() - 1; i > 0; --i)
+                    bool blocked = false;
+                    bool attack = false;
+                    bool capture = false;
+                    uint32_t target = Entity::Invalid;
+                    for (const auto oid : cell.occupants)
                     {
-                        auto& nextEntity = entities[playerEntities[i - 1]];
-                        moveEntity(playerEntities[i], nextEntity.x, nextEntity.y);
+                        if (component<Friendly>().has(oid))
+                        {
+                            blocked = true;
+                            break;
+                        }
+                        if (component<Enemy>().has(oid))
+                        {
+                            attack = true;
+                            target = oid;
+                            break;
+                        }
+                        if (component<Neutral>().has(oid))
+                        {
+                            capture = true;
+                            target = oid;
+                            break;
+                        }
                     }
 
-                    moveEntity(playerEntities.front(), player.x + dx, player.y + dy);
+                    if (!blocked)
+                    {
+                        if (attack)
+                        {
+                            component<Enemy>().remove(target);
+                            component<Neutral>().add(target);
+                            auto& sprite = component<Sprite>().get(target);
+                            sprite.textureIndex = textures.friendly[Direction::Down];
+                            sprite.color = { 1, 0, 1, 1 };
+                        }
+                        else
+                        {
+                            if (capture)
+                            {
+                                component<Neutral>().remove(target);
+                                component<Friendly>().add(target);
+                                auto& sprite = component<Sprite>().get(target);
+                                sprite.color = { 1, 1, 1, 1 };
+                                playerEntities.push_back(target);
+                            }
+
+                            for (uint32_t i = playerEntities.size() - 1; i > 0; --i)
+                            {
+                                auto& nextEntity = entities[playerEntities[i - 1]];
+                                moveEntity(playerEntities[i], nextEntity.x, nextEntity.y);
+                            }
+
+                            moveEntity(playerEntities.front(), player.x + dx, player.y + dy);
+                        }
+                    }
+
                 }
             }
         }
