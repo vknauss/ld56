@@ -158,6 +158,11 @@ struct InputEvent
     Direction direction;
 };
 
+struct InputIcon
+{
+    bool completed = false;
+};
+
 static constexpr std::pair<int, int> directionCoords(Direction direction)
 {
     switch (direction)
@@ -231,6 +236,7 @@ struct GameLogic final : eng::GameLogicInterface
         } enemy;
         std::vector<uint32_t> dotline;
         std::vector<uint32_t> zap;
+        uint32_t arrow;
     } textures;
 
     struct
@@ -259,6 +265,7 @@ struct GameLogic final : eng::GameLogicInterface
     static constexpr int texelsPerTile = 32;
 
     std::deque<InputEvent> inputQueue;
+    std::deque<uint32_t> inputSpriteEntities;
 
     template<typename ComponentType>
     ComponentArray<ComponentType>& component()
@@ -380,13 +387,10 @@ struct GameLogic final : eng::GameLogicInterface
         if ((entity.x != x || entity.y != y) && x < map.cells.front().size() && y < map.cells.size())
         {
             Cell& newCell = map.cells[y][x];
-            if (!newCell.solid)
-            {
-                newCell.occupants.push_back(id);
-                Cell& oldCell = map.cells[entity.y][entity.x];
-                oldCell.occupants.erase(std::find(oldCell.occupants.begin(), oldCell.occupants.end(), id));
-                entity.x = x, entity.y = y;
-            }
+            newCell.occupants.push_back(id);
+            Cell& oldCell = map.cells[entity.y][entity.x];
+            oldCell.occupants.erase(std::find(oldCell.occupants.begin(), oldCell.occupants.end(), id));
+            entity.x = x, entity.y = y;
         }
     }
 
@@ -612,6 +616,7 @@ struct GameLogic final : eng::GameLogicInterface
             resourceLoader.loadTexture("textures/Zap5.png"),
             resourceLoader.loadTexture("textures/Zap6.png"),
         };
+        textures.arrow = resourceLoader.loadTexture("textures/arrow.png");
 
         sequences.enemy = {
             { Direction::Up, {
@@ -745,10 +750,20 @@ struct GameLogic final : eng::GameLogicInterface
             entity.prevy = entity.y;
         }
 
+        if (!inputSpriteEntities.empty() && component<InputIcon>().get(inputSpriteEntities.front()).completed)
+        {
+            destroyEntity(inputSpriteEntities.front());
+            inputSpriteEntities.pop_front();
+            for (auto id : inputSpriteEntities)
+            {
+                moveEntity(id, entities[id].x + 1, entities[id].y);
+            }
+        }
         if (!inputQueue.empty())
         {
             InputEvent event = inputQueue.front();
             inputQueue.pop_front();
+            component<InputIcon>().get(inputSpriteEntities.front()).completed = true;
 
             if (!playerEntities.empty())
             {
@@ -859,8 +874,16 @@ struct GameLogic final : eng::GameLogicInterface
         {
             if (input.getBoolean(mapping, eng::InputInterface::BoolStateEvent::Pressed))
             {
-                inputQueue.clear();
+                // inputQueue.clear();
                 inputQueue.push_back(InputEvent { direction });
+                uint32_t id = createEntity(maxTilesHorizontal - 1 - inputSpriteEntities.size(), maxTilesVertical - 1);
+                component<Sprite>().add(id) = Sprite{
+                    .textureIndex = textures.arrow,
+                    .color = { 1, 1, 0, 1 },
+                    .direction = direction,
+                };
+                component<InputIcon>().add(id);
+                inputSpriteEntities.push_back(id);
             }
         }
 
@@ -981,6 +1004,18 @@ struct GameLogic final : eng::GameLogicInterface
                     return false;
                 });
         });
+
+        /* glm::vec2 inputSpritePosition = { maxTilesHorizontal - 0.5, 0.5 };
+        for (const auto& event : inputQueue)
+        {
+            scene.instances().push_back(eng::Instance {
+                    .position = inputSpritePosition,
+                    .angle = directionAngle(event.direction),
+                    .textureIndex = textures.arrow,
+                    .tintColor = { 1, 1, 0, 1 },
+                });
+            inputSpritePosition.x -= 1.0f;
+        } */
 
         const auto [framebufferWidth, framebufferHeight] = scene.framebufferSize();
         const float aspectRatio = static_cast<float>(framebufferWidth) / static_cast<float>(framebufferHeight);

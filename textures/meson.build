@@ -1,5 +1,4 @@
 texture_files = [
-  'blank.png',
   'Dotline1.png',
   'Dotline2.png',
   'Dotline3.png',
@@ -25,6 +24,8 @@ texture_files = [
   'Zap4.png',
   'Zap5.png',
   'Zap6.png',
+  'arrow.png',
+  'blank.png',
 ]
 
 foreach file : texture_files
