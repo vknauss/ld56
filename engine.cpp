@@ -233,9 +233,8 @@ struct ResourceLoader final : ResourceLoaderInterface
     }
 };
 
-class Scene final : public SceneInterface
+struct Scene final : public SceneInterface
 {
-public:
     std::vector<Instance>& instances() override
     {
         return instances_;
@@ -246,14 +245,32 @@ public:
         return projection_;
     }
 
-private:
+    glm::vec2& viewportOffset() override
+    {
+        return viewportOffset_;
+    }
+
+    glm::vec2& viewportExtent() override
+    {
+        return viewportExtent_;
+    }
+
+    std::pair<uint32_t, uint32_t> framebufferSize() const override
+    {
+        return framebufferSize_;
+    }
+
     std::vector<Instance> instances_;
     glm::mat4 projection_;
+    glm::vec2 viewportOffset_;
+    glm::vec2 viewportExtent_;
+    std::pair<uint32_t, uint32_t> framebufferSize_;
 };
 
 struct AppCallbackData
 {
     Swapchain& swapchain;
+    Scene& scene;
     InputManager& inputManager;
 };
 
@@ -282,6 +299,7 @@ static void framebufferSizeCallback(GLFWwindow* window, int width, int height)
     {
         callbackData.swapchain.recreate(vk::Extent2D{ static_cast<uint32_t>(width), static_cast<uint32_t>(height) });
     }
+    callbackData.scene.framebufferSize_ = { static_cast<uint32_t>(width), static_cast<uint32_t>(height) };
 }
 
 void eng::run(GameLogicInterface& gameLogic, const ApplicationInfo& applicationInfo)
@@ -325,8 +343,11 @@ void eng::run(GameLogicInterface& gameLogic, const ApplicationInfo& applicationI
     Scene scene;
     InputManager inputManager;
 
+    scene.framebufferSize_ = { static_cast<uint32_t>(framebufferWidth), static_cast<uint32_t>(framebufferHeight) };
+
     AppCallbackData appCallbackData {
         .swapchain = swapchain,
+        .scene = scene,
         .inputManager = inputManager,
     };
     glfwSetWindowUserPointer(window, &appCallbackData);
@@ -352,8 +373,8 @@ void eng::run(GameLogicInterface& gameLogic, const ApplicationInfo& applicationI
         lastTime = time;
 
         renderer.beginFrame();
-        renderer.updateFrame(scene.instances(), scene.projection());
-        renderer.drawFrame(swapchain, scene.instances().size());
+        renderer.updateFrame(scene.instances(), scene.projection_);
+        renderer.drawFrame(swapchain, scene.viewportOffset_, scene.viewportExtent_, scene.instances().size());
         renderer.nextFrame();
         inputManager.nextFrame();
     }

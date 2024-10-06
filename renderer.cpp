@@ -369,7 +369,7 @@ void Renderer::updateFrame(const std::vector<Instance>& instances, const glm::ma
     }
 }
 
-void Renderer::drawFrame(const Swapchain& swapchain, const uint32_t numInstances)
+void Renderer::drawFrame(const Swapchain& swapchain, const glm::vec2& viewportOffset, const glm::vec2& viewportExtent, const uint32_t numInstances)
 {
     auto [acquireResult, imageIndex] = swapchain.swapchain.acquireNextImage(std::numeric_limits<uint64_t>::max(), frameData[frameIndex].imageAcquiredSemaphore, nullptr);
     if (acquireResult != vk::Result::eSuccess && acquireResult != vk::Result::eSuboptimalKHR)
@@ -412,8 +412,10 @@ void Renderer::drawFrame(const Swapchain& swapchain, const uint32_t numInstances
     });
 
     commandBuffer.setViewport(0, vk::Viewport {
-            .width = static_cast<float>(swapchain.extent.width),
-            .height = static_cast<float>(swapchain.extent.height),
+            .x = viewportOffset.x,
+            .y = viewportOffset.y,
+            .width = viewportExtent.x,
+            .height = viewportExtent.y,
             .minDepth = 0.0f,
             .maxDepth = 1.0f,
         });

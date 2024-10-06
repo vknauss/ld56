@@ -1,6 +1,6 @@
 #version 450 core
 
-const vec2[4] corners = vec2[4](vec2(-1, -1), vec2(1, -1), vec2(-1, 1), vec2(1, 1));
+const vec2[4] corners = vec2[4](vec2(-0.5, -0.5), vec2(0.5, -0.5), vec2(-0.5, 0.5), vec2(0.5, 0.5));
 const vec2[4] cornerTexCoords = vec2[4](vec2(0, 1), vec2(1, 1), vec2(0, 0), vec2(1, 0));
 
 layout(location = 0) out vec2 texCoord;

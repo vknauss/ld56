@@ -25,6 +25,9 @@ namespace eng
     {
         virtual std::vector<Instance>& instances() = 0;
         virtual glm::mat4& projection() = 0;
+        virtual glm::vec2& viewportOffset() = 0;
+        virtual glm::vec2& viewportExtent() = 0;
+        virtual std::pair<uint32_t, uint32_t> framebufferSize() const = 0;
     };
 
     struct InputInterface

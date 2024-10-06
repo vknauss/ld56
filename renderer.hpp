@@ -30,7 +30,7 @@ namespace eng
 
         void beginFrame();
         void updateFrame(const std::vector<Instance>& instances, const glm::mat4& projection);
-        void drawFrame(const Swapchain& swapchain, const uint32_t numInstances);
+        void drawFrame(const Swapchain& swapchain, const glm::vec2& viewportOffset, const glm::vec2& viewportExtent, const uint32_t numInstances);
         void nextFrame();
 
         const vk::raii::Device& device;

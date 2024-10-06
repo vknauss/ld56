@@ -97,6 +97,7 @@ struct Entity
 {
     constexpr static uint32_t Invalid = std::numeric_limits<uint32_t>::max();
     uint32_t x, y;
+    uint32_t prevx, prevy;
     bool alive;
 };
 
@@ -246,10 +247,16 @@ struct GameLogic final : eng::GameLogicInterface
     std::deque<uint32_t> freeEntities;
     std::vector<uint32_t> playerEntities;
 
+    static constexpr int animationFramesPerTick = 6;
     static constexpr double tickInterval = 0.5;
-    static constexpr double animationFrameInterval = tickInterval / 6;
+    static constexpr double animationFrameInterval = tickInterval / animationFramesPerTick;
     double tickTimer = 0;
     double animationFrameTimer = 0;
+    int tweenFrame = 0;
+
+    static constexpr int maxTilesVertical = 12;
+    static constexpr int maxTilesHorizontal = 20;
+    static constexpr int texelsPerTile = 32;
 
     std::deque<InputEvent> inputQueue;
 
@@ -283,7 +290,7 @@ struct GameLogic final : eng::GameLogicInterface
             index = entities.size();
             entities.emplace_back();
         }
-        entities.at(index) = Entity{ .x = x, .y = y, .alive = true };
+        entities.at(index) = Entity{ .x = x, .y = y, .prevx = x, .prevy = y, .alive = true };
         map.cells[y][x].occupants.push_back(index);
         return index;
     }
@@ -378,8 +385,7 @@ struct GameLogic final : eng::GameLogicInterface
                 newCell.occupants.push_back(id);
                 Cell& oldCell = map.cells[entity.y][entity.x];
                 oldCell.occupants.erase(std::find(oldCell.occupants.begin(), oldCell.occupants.end(), id));
-                entity.x = x;
-                entity.y = y;
+                entity.x = x, entity.y = y;
             }
         }
     }
@@ -534,7 +540,7 @@ struct GameLogic final : eng::GameLogicInterface
                     };
 
                     bool anyScanFound = false;
-                    int bestDistance = 0;
+                    uint32_t bestDistance = 0;
                     int bestIndex = 0;
 
                     for (uint32_t i = 0; i < scanDirections.size(); ++i)
@@ -729,12 +735,16 @@ struct GameLogic final : eng::GameLogicInterface
         input.mapKey(directionInputMappings[Direction::Left], glfwGetKeyScancode(GLFW_KEY_A));
         input.mapKey(directionInputMappings[Direction::Down], glfwGetKeyScancode(GLFW_KEY_S));
         input.mapKey(directionInputMappings[Direction::Right], glfwGetKeyScancode(GLFW_KEY_D));
-
-        scene.projection() = glm::orthoLH_ZO(0.0f, 40.0f, 24.0f, 0.0f, 0.0f, 1.0f);
     }
 
     void gameTick()
     {
+        for (auto& entity : entities)
+        {
+            entity.prevx = entity.x;
+            entity.prevy = entity.y;
+        }
+
         if (!inputQueue.empty())
         {
             InputEvent event = inputQueue.front();
@@ -856,6 +866,7 @@ struct GameLogic final : eng::GameLogicInterface
 
         if (animationFrameTimer >= animationFrameInterval)
         {
+            ++tweenFrame;
             component<Enemy>().forEach([&](Enemy& enemy, uint32_t id)
             {
                 ++enemy.frame;
@@ -877,6 +888,7 @@ struct GameLogic final : eng::GameLogicInterface
         {
             gameTick();
             tickTimer -= tickInterval;
+            tweenFrame = 0;
         }
         tickTimer += deltaTime;
 
@@ -888,7 +900,7 @@ struct GameLogic final : eng::GameLogicInterface
                 if (map.cells[i][j].solid)
                 {
                     scene.instances().push_back(eng::Instance {
-                                .position = glm::vec2(1 + 2 * j, 2 * (map.cells.size() - i) - 1),
+                                .position = glm::vec2(j + 0.5, map.cells.size() - i - 0.5),
                                 .textureIndex = textures.blank,
                             });
                 }
@@ -898,8 +910,18 @@ struct GameLogic final : eng::GameLogicInterface
         component<Sprite>().forEach([&](const auto& sprite, auto id)
         {
             const auto& entity = entities.at(id);
+            glm::vec2 position(entity.x + 0.5, map.cells.size() - entity.y - 0.5);
+            constexpr int tweenEndFrame = animationFramesPerTick / 2;
+            if (tweenFrame < tweenEndFrame)
+            {
+                float tween = static_cast<float>(tweenFrame) / tweenEndFrame;
+                tween = 3 * tween * tween - 2 * tween * tween * tween;
+                tween = std::round(tween * texelsPerTile) / texelsPerTile;
+                position = glm::mix(glm::vec2(entity.prevx + 0.5, map.cells.size() - entity.prevy - 0.5), position, tween);
+            }
+
             scene.instances().push_back(eng::Instance {
-                        .position = glm::vec2(1 + 2 * entity.x, 2 * (map.cells.size() - entity.y) - 1),
+                        .position = position,
                         .angle = directionAngle(sprite.direction),
                         .textureIndex = sprite.textureIndex,
                         .tintColor = sprite.color,
@@ -951,7 +973,7 @@ struct GameLogic final : eng::GameLogicInterface
                         }
                     }
                     scene.instances().push_back(eng::Instance {
-                                .position = glm::vec2(1 + 2 * cell.x, 2 * (map.cells.size() - cell.y) - 1),
+                                .position = glm::vec2(cell.x + 0.5, map.cells.size() - cell.y - 0.5),
                                 .angle = angle,
                                 .textureIndex = textureIndex,
                                 .tintColor = tintColor,
@@ -959,6 +981,24 @@ struct GameLogic final : eng::GameLogicInterface
                     return false;
                 });
         });
+
+        const auto [framebufferWidth, framebufferHeight] = scene.framebufferSize();
+        const float aspectRatio = static_cast<float>(framebufferWidth) / static_cast<float>(framebufferHeight);
+        if (maxTilesVertical * aspectRatio > maxTilesHorizontal)
+        {
+            const float framebufferPixelsPerTile = static_cast<float>(framebufferHeight) / static_cast<float>(maxTilesVertical);
+            const float viewportWidth = maxTilesHorizontal * framebufferPixelsPerTile;
+            scene.viewportOffset() = { (static_cast<float>(framebufferWidth) - viewportWidth) / 2, 0 };
+            scene.viewportExtent() = { viewportWidth, framebufferHeight };
+        }
+        else
+        {
+            const float framebufferPixelsPerTile = static_cast<float>(framebufferWidth) / static_cast<float>(maxTilesHorizontal);
+            const float viewportHeight = maxTilesVertical * framebufferPixelsPerTile;
+            scene.viewportOffset() = { 0, (static_cast<float>(framebufferHeight) - viewportHeight) / 2 };
+            scene.viewportExtent() = { framebufferWidth, viewportHeight };
+        }
+        scene.projection() = glm::orthoLH_ZO<float>(0.0f, maxTilesHorizontal, maxTilesVertical, 0.0f, 0.0f, 1.0f);
     }
 
     void cleanup() override
@@ -973,7 +1013,7 @@ int main(int argc, const char** argv)
             .appName = "gubgub",
             .appVersion = 0,
             .windowTitle = "gubgub",
-            .windowWidth = 1280,
-            .windowHeight = 768,
+            .windowWidth = 3 * GameLogic::texelsPerTile * GameLogic::maxTilesHorizontal,
+            .windowHeight = 3 * GameLogic::texelsPerTile * GameLogic::maxTilesVertical,
         });
 }
