@@ -109,6 +109,7 @@ struct Sprite
 
 struct Cell
 {
+    uint32_t x, y;
     bool solid = false;
     std::vector<uint32_t> occupants;
 };
@@ -131,6 +132,7 @@ struct Enemy
     struct { uint32_t x = std::numeric_limits<uint32_t>::max(), y = std::numeric_limits<uint32_t>::max(); } target;
     Direction facingDirection = Direction::Down;
     State state = State::Patrolling;
+    uint32_t frame = 0;
     uint32_t lineFrame = 0;
 };
 
@@ -147,6 +149,8 @@ struct Neutral
 };
 
 struct PatrolPoint {};
+
+struct Solid {};
 
 struct InputEvent
 {
@@ -165,6 +169,8 @@ static constexpr std::pair<int, int> directionCoords(Direction direction)
             return { 0, 1 };
         case Direction::Right:
             return { 1, 0 };
+        default:
+            return { 0, 0 };
     }
 }
 
@@ -197,6 +203,8 @@ static constexpr float directionAngle(Direction direction)
             return 0;
         case Direction::Right:
             return glm::half_pi<float>();
+        default:
+            return 0;
     }
 }
 
@@ -206,10 +214,28 @@ struct GameLogic final : eng::GameLogicInterface
     {
         uint32_t blank;
         std::map<Direction, uint32_t> friendly;
-        std::map<Direction, uint32_t> enemy;
+        struct
+        {
+            uint32_t backDown;
+            uint32_t backUp;
+            uint32_t frontDown;
+            uint32_t frontUp;
+            uint32_t frontUpBlink;
+            uint32_t leftDown;
+            uint32_t leftUp;
+            uint32_t leftUpBlink;
+            uint32_t rightDown;
+            uint32_t rightUp;
+            uint32_t rightUpBlink;
+        } enemy;
         std::vector<uint32_t> dotline;
         std::vector<uint32_t> zap;
     } textures;
+
+    struct
+    {
+        std::map<Direction, std::vector<uint32_t>> enemy;
+    } sequences;
 
     std::map<Direction, uint32_t> directionInputMappings;
 
@@ -299,6 +325,7 @@ struct GameLogic final : eng::GameLogicInterface
             component<Friendly>().add(entity);
             component<Leader>().add(entity);
             component<Sprite>().add(entity) = { .color = glm::vec4(1, 1, 0, 1) };
+            component<Solid>().add(entity);
             ++it;
         }
         for (; it != positions.end(); ++it)
@@ -308,6 +335,7 @@ struct GameLogic final : eng::GameLogicInterface
             playerEntities.push_back(entity);
             component<Friendly>().add(entity);
             component<Sprite>().add(entity);
+            component<Solid>().add(entity);
         }
     }
 
@@ -316,6 +344,7 @@ struct GameLogic final : eng::GameLogicInterface
         uint32_t entity = createEntity(x, y);
         component<Enemy>().add(entity) = { .facingDirection = facingDirection };
         component<Sprite>().add(entity);
+        component<Solid>().add(entity);
     }
 
     void clampDeltaToMap(uint32_t x, uint32_t y, int& dx, int& dy)
@@ -355,38 +384,56 @@ struct GameLogic final : eng::GameLogicInterface
         }
     }
 
+    template<typename Callable>
+    bool scan(uint32_t x, uint32_t y, Direction direction, uint32_t limit, Callable&& fn)
+    {
+        auto [dx, dy] = directionCoords(direction);
+        clampDeltaToMap(x, y, dx, dy);
+        uint32_t testx = x + dx, testy = y + dy;
+        uint32_t distance = 0;
+        while ((limit == 0 || distance < limit) && (dx != 0 || dy != 0))
+        {
+            ++distance;
+            const auto& cell = map.cells[testy][testx];
+            if (cell.solid)
+            {
+                return false;
+            }
+            if (fn(cell, distance))
+            {
+                return true;
+            }
+            if (std::find_if(cell.occupants.begin(), cell.occupants.end(),
+                        [&](auto oid) { return component<Solid>().has(oid); }) != cell.occupants.end())
+            {
+                return false;
+            }
+            clampDeltaToMap(testx, testy, dx, dy);
+            testx += dx, testy += dy;
+        }
+        return false;
+    }
+
     void enemyLogic(Enemy& enemy, uint32_t id)
     {
         auto& entity = entities.at(id);
 
-        auto [dx, dy] = directionCoords(enemy.facingDirection);
-        uint32_t testx = entity.x, testy = entity.y;
-        clampDeltaToMap(testx, testy, dx, dy);
-        uint32_t target = Entity::Invalid;
-
-        // scan forwards for player entities
-        while (dx != 0 || dy != 0)
+        // scan for player
+        if (uint32_t target;
+            scan(entity.x, entity.y, enemy.facingDirection, 0,
+                [&](const Cell& cell, uint32_t distance)
+                {
+                    if (auto it = std::find_if(cell.occupants.begin(), cell.occupants.end(),
+                                [&](auto oid){ return component<Friendly>().has(oid); });
+                            it != cell.occupants.end())
+                    {
+                        target = *it;
+                        return true;
+                    }
+                    return false;
+                }))
         {
-            testx += dx;
-            testy += dy;
-
-            const auto& cell = map.cells[testy][testx];
-            if (cell.solid)
-            {
-                break;
-            }
-
-            if (auto it = std::find_if(cell.occupants.begin(), cell.occupants.end(), [&](auto oid) { return component<Friendly>().has(oid); });
-                    it != cell.occupants.end())
-            {
-                target = *it;
-                break;
-            }
-            clampDeltaToMap(testx, testy, dx, dy);
-        }
-
-        if (target != Entity::Invalid)
-        {
+            // found player
             if (enemy.state == Enemy::State::Attack)
             {
                 enemy.state = Enemy::State::Alert;
@@ -403,8 +450,9 @@ struct GameLogic final : eng::GameLogicInterface
                     if (it == playerEntities.begin())
                     {
                         // dead?
+                        ++it;
                     }
-                    else
+                    // else
                     {
                         for (auto tmp = it; tmp != playerEntities.end(); ++tmp)
                         {
@@ -419,6 +467,7 @@ struct GameLogic final : eng::GameLogicInterface
         }
         else
         {
+            // not found player
             if (enemy.state == Enemy::State::Aggressive)
             {
                 enemy.state = Enemy::State::Alert;
@@ -454,6 +503,12 @@ struct GameLogic final : eng::GameLogicInterface
                             {
                                 enemy.target = { std::numeric_limits<uint32_t>::max(), std::numeric_limits<uint32_t>::max() };
                             }
+                            // TESTING is the cell occupied?
+                            else if (std::find_if(cell.occupants.begin(), cell.occupants.end(),
+                                        [&](auto oid) { return component<Solid>().has(oid); }) != cell.occupants.end())
+                            {
+                                enemy.target = { std::numeric_limits<uint32_t>::max(), std::numeric_limits<uint32_t>::max() };
+                            }
                         }
                     }
                 }
@@ -463,7 +518,11 @@ struct GameLogic final : eng::GameLogicInterface
                 {
                     auto [dx, dy] = directionCoords(enemy.facingDirection);
                     clampDeltaToMap(entity.x, entity.y, dx, dy);
-                    moveEntity(id, entity.x + dx, entity.y + dy);
+                    // const auto& cell = map.cells[entity.y + dy][entity.x + dx];
+                    // if (std::find_if(cell.occupants.begin(), cell.occupants.end(), [&](auto oid) { return component<Solid>().has(oid); }) == cell.occupants.end())
+                    // {
+                        moveEntity(id, entity.x + dx, entity.y + dy);
+                    // }
                 }
                 else
                 {
@@ -480,42 +539,27 @@ struct GameLogic final : eng::GameLogicInterface
 
                     for (uint32_t i = 0; i < scanDirections.size(); ++i)
                     {
-                        auto [dx, dy] = directionCoords(scanDirections[i]);
-                        clampDeltaToMap(entity.x, entity.y, dx, dy);
-                        uint32_t testx = entity.x + dx, testy = entity.y + dy;
-                        int distance = 0;
-
-                        while (dx != 0 || dy != 0)
-                        {
-                            const auto& cell = map.cells[testy][testx];
-                            if (cell.solid)
+                        scan(entity.x, entity.y, scanDirections[i], 0,
+                            [&](const Cell& cell, uint32_t distance)
                             {
+                                if (std::find_if(cell.occupants.begin(), cell.occupants.end(),
+                                        [&](auto oid){ return component<PatrolPoint>().has(oid); }) != cell.occupants.end())
+                                {
+                                    if (!anyScanFound || distance < bestDistance)
+                                    {
+                                        anyScanFound = true;
+                                        bestDistance = distance;
+                                        bestIndex = i;
+                                    }
+                                    return true;
+                                }
                                 if (!anyScanFound && distance > bestDistance)
                                 {
                                     bestDistance = distance;
                                     bestIndex = i;
                                 }
-                                break;
-                            }
-
-                            ++distance;
-                            if (std::find_if(cell.occupants.begin(), cell.occupants.end(), [&](auto oid) {
-                                            return component<PatrolPoint>().has(oid);
-                                        }) != cell.occupants.end())
-                            {
-                                if (!anyScanFound || distance < bestDistance)
-                                {
-                                    anyScanFound = true;
-                                    bestDistance = distance;
-                                    bestIndex = i;
-                                }
-                                break;
-                            }
-
-                            clampDeltaToMap(testx, testy, dx, dy);
-                            testx += dx;
-                            testy += dy;
-                        }
+                                return false;
+                            });
                     }
 
                     enemy.facingDirection = scanDirections[bestIndex];
@@ -524,9 +568,6 @@ struct GameLogic final : eng::GameLogicInterface
                 }
             }
         }
-
-        auto& sprite = component<Sprite>().get(id);
-        sprite.textureIndex = textures.enemy.at(enemy.facingDirection);
     }
 
     void init(eng::ResourceLoaderInterface& resourceLoader, eng::SceneInterface& scene, eng::InputInterface& input) override
@@ -539,10 +580,17 @@ struct GameLogic final : eng::GameLogicInterface
             { Direction::Right, resourceLoader.loadTexture("textures/GubgubSpriteSideRight.png") },
         };
         textures.enemy = {
-            { Direction::Up, resourceLoader.loadTexture("textures/NubnubSpriteBack.png") },
-            { Direction::Left, resourceLoader.loadTexture("textures/NubnubSpriteSideLeft.png") },
-            { Direction::Down, resourceLoader.loadTexture("textures/NubnubSpriteFront.png") },
-            { Direction::Right, resourceLoader.loadTexture("textures/NubnubSpriteSideRight.png") },
+            .backDown = resourceLoader.loadTexture("textures/NNBackDown.png"),
+            .backUp = resourceLoader.loadTexture("textures/NNBackUp.png"),
+            .frontDown = resourceLoader.loadTexture("textures/NNFrontDown.png"),
+            .frontUp = resourceLoader.loadTexture("textures/NNFrontUp.png"),
+            .frontUpBlink = resourceLoader.loadTexture("textures/NNFrontUpBlink.png"),
+            .leftDown = resourceLoader.loadTexture("textures/NNLeftDown.png"),
+            .leftUp = resourceLoader.loadTexture("textures/NNLeftUp.png"),
+            .leftUpBlink = resourceLoader.loadTexture("textures/NNLeftUpBlink.png"),
+            .rightDown = resourceLoader.loadTexture("textures/NNRightDown.png"),
+            .rightUp = resourceLoader.loadTexture("textures/NNRightUp.png"),
+            .rightUpBlink = resourceLoader.loadTexture("textures/NNRightUpBlink.png"),
         };
         textures.dotline = {
             resourceLoader.loadTexture("textures/Dotline1.png"),
@@ -557,6 +605,59 @@ struct GameLogic final : eng::GameLogicInterface
             resourceLoader.loadTexture("textures/Zap4.png"),
             resourceLoader.loadTexture("textures/Zap5.png"),
             resourceLoader.loadTexture("textures/Zap6.png"),
+        };
+
+        sequences.enemy = {
+            { Direction::Up, {
+                    textures.enemy.backDown,
+                    textures.enemy.backDown,
+                    textures.enemy.backUp,
+                    textures.enemy.backUp,
+                    textures.enemy.backUp,
+                    textures.enemy.backDown,
+                } },
+            { Direction::Left, {
+                    textures.enemy.leftDown,
+                    textures.enemy.leftDown,
+                    textures.enemy.leftUp,
+                    textures.enemy.leftUp,
+                    textures.enemy.leftUp,
+                    textures.enemy.leftDown,
+                    textures.enemy.leftDown,
+                    textures.enemy.leftDown,
+                    textures.enemy.leftUp,
+                    textures.enemy.leftUpBlink,
+                    textures.enemy.leftUp,
+                    textures.enemy.leftDown,
+                } },
+            { Direction::Down, {
+                    textures.enemy.frontDown,
+                    textures.enemy.frontDown,
+                    textures.enemy.frontUp,
+                    textures.enemy.frontUp,
+                    textures.enemy.frontUp,
+                    textures.enemy.frontDown,
+                    textures.enemy.frontDown,
+                    textures.enemy.frontDown,
+                    textures.enemy.frontUp,
+                    textures.enemy.frontUpBlink,
+                    textures.enemy.frontUp,
+                    textures.enemy.frontDown,
+                } },
+            { Direction::Right, {
+                    textures.enemy.rightDown,
+                    textures.enemy.rightDown,
+                    textures.enemy.rightUp,
+                    textures.enemy.rightUp,
+                    textures.enemy.rightUp,
+                    textures.enemy.rightDown,
+                    textures.enemy.rightDown,
+                    textures.enemy.rightDown,
+                    textures.enemy.rightUp,
+                    textures.enemy.rightUpBlink,
+                    textures.enemy.rightUp,
+                    textures.enemy.rightDown,
+                } },
         };
 
         using namespace std::string_view_literals;
@@ -582,7 +683,7 @@ struct GameLogic final : eng::GameLogicInterface
             map.cells[row].resize(mapRows[row].size());
             for (uint32_t col = 0; col < mapRows[row].size(); ++col)
             {
-                map.cells[row][col] = Cell {};
+                map.cells[row][col] = Cell { .x = col, .y = row, };
                 switch (mapRows[row][col])
                 {
                     case 'X':
@@ -656,11 +757,6 @@ struct GameLogic final : eng::GameLogicInterface
                     uint32_t target = Entity::Invalid;
                     for (const auto oid : cell.occupants)
                     {
-                        if (component<Friendly>().has(oid))
-                        {
-                            blocked = true;
-                            break;
-                        }
                         if (component<Enemy>().has(oid))
                         {
                             attack = true;
@@ -671,6 +767,11 @@ struct GameLogic final : eng::GameLogicInterface
                         {
                             capture = true;
                             target = oid;
+                            break;
+                        }
+                        if (component<Solid>().has(oid))
+                        {
+                            blocked = true;
                             break;
                         }
                     }
@@ -748,15 +849,25 @@ struct GameLogic final : eng::GameLogicInterface
         {
             if (input.getBoolean(mapping, eng::InputInterface::BoolStateEvent::Pressed))
             {
+                inputQueue.clear();
                 inputQueue.push_back(InputEvent { direction });
             }
         }
 
         if (animationFrameTimer >= animationFrameInterval)
         {
-            component<Enemy>().forEach([&](Enemy& enemy, uint32_t)
+            component<Enemy>().forEach([&](Enemy& enemy, uint32_t id)
             {
+                ++enemy.frame;
                 ++enemy.lineFrame;
+
+                auto& sprite = component<Sprite>().get(id);
+                const auto& sequence = sequences.enemy.at(enemy.facingDirection);
+                if (enemy.frame >= sequence.size())
+                {
+                    enemy.frame = 0;
+                }
+                sprite.textureIndex = sequence[enemy.frame];
             });
             animationFrameTimer -= animationFrameInterval;
         }
@@ -798,51 +909,55 @@ struct GameLogic final : eng::GameLogicInterface
         component<Enemy>().forEach([&](Enemy& enemy, uint32_t id)
         {
             const auto& entity = entities[id];
-            auto [dx, dy] = directionCoords(enemy.facingDirection);
-            clampDeltaToMap(entity.x, entity.y, dx, dy);
-            uint32_t x = entity.x + dx, y = entity.y + dy;
-            while (dx != 0 || dy != 0)
-            {
-                if (map.cells[y][x].solid)
-                {
-                    break;
-                }
-                uint32_t textureIndex;
-                glm::vec4 tintColor = { 1, 1, 1, 1 };
-                if (enemy.state == Enemy::State::Attack)
-                {
-                    if (enemy.lineFrame >= textures.zap.size())
-                    {
-                        enemy.lineFrame = 0;
-                    }
-                    textureIndex = textures.zap[enemy.lineFrame];
-                }
-                else
-                {
-                    if (enemy.lineFrame >= textures.dotline.size())
-                    {
-                        enemy.lineFrame = 0;
-                    }
-                    textureIndex = textures.dotline[enemy.lineFrame];
-                    if (enemy.state == Enemy::State::Alert)
-                    {
-                        tintColor = { 1, 1, 0, 1 };
-                    }
-                    else if (enemy.state == Enemy::State::Aggressive)
-                    {
-                        tintColor = { 1, 0, 0, 1 };
-                    }
-                }
-                scene.instances().push_back(eng::Instance {
-                            .position = glm::vec2(1 + 2 * x, 2 * (map.cells.size() - y) - 1),
-                            .angle = directionAngle(enemy.facingDirection) - glm::half_pi<float>(),
-                            .textureIndex = textureIndex,
-                            .tintColor = tintColor,
-                        });
 
-                clampDeltaToMap(x, y, dx, dy);
-                x += dx, y +=  dy;
+            uint32_t textureIndex;
+            glm::vec4 tintColor = { 1, 1, 1, 1 };
+            if (enemy.state == Enemy::State::Attack)
+            {
+                if (enemy.lineFrame >= textures.zap.size())
+                {
+                    enemy.lineFrame = 0;
+                }
+                textureIndex = textures.zap[enemy.lineFrame];
             }
+            else
+            {
+                if (enemy.lineFrame >= textures.dotline.size())
+                {
+                    enemy.lineFrame = 0;
+                }
+                textureIndex = textures.dotline[enemy.lineFrame];
+                if (enemy.state == Enemy::State::Alert)
+                {
+                    tintColor = { 1, 1, 0, 1 };
+                }
+                else if (enemy.state == Enemy::State::Aggressive)
+                {
+                    tintColor = { 1, 0, 0, 1 };
+                }
+            }
+            float angle = directionAngle(enemy.facingDirection) - glm::half_pi<float>();
+
+            scan(entity.x, entity.y, enemy.facingDirection, 0,
+                [&](const Cell& cell, uint32_t distance)
+                {
+                    if (auto it = std::find_if(cell.occupants.begin(), cell.occupants.end(),
+                            [&](auto oid){ return component<Solid>().has(oid); });
+                        it != cell.occupants.end())
+                    {
+                        if (!(component<Friendly>().has(*it) || component<Neutral>().has(*it)))
+                        {
+                            return true;
+                        }
+                    }
+                    scene.instances().push_back(eng::Instance {
+                                .position = glm::vec2(1 + 2 * cell.x, 2 * (map.cells.size() - cell.y) - 1),
+                                .angle = angle,
+                                .textureIndex = textureIndex,
+                                .tintColor = tintColor,
+                            });
+                    return false;
+                });
         });
     }
 
