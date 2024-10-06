@@ -11,9 +11,9 @@
 #include <typeinfo>
 #include <iostream>
 
-enum class EntityType
+enum class Direction
 {
-    Leader, Follower, Hostile,
+    Up, Left, Down, Right,
 };
 
 struct ComponentArrayBase
@@ -81,7 +81,8 @@ struct Entity
 struct Sprite
 {
     uint32_t textureIndex;
-    glm::vec4 color;
+    glm::vec4 color { 1, 1, 1, 1 };
+    Direction direction = Direction::Down;
 };
 
 struct Cell
@@ -95,31 +96,42 @@ struct Map
     std::vector<std::vector<Cell>> cells;
 };
 
-enum class Direction
-{
-    Up, Left, Down, Right,
-};
-
 struct Enemy
 {
-    uint32_t entity;
-    std::pair<uint32_t, uint32_t> target;
+    struct { uint32_t x = std::numeric_limits<uint32_t>::max(), y = std::numeric_limits<uint32_t>::max(); } target;
     Direction facingDirection;
 };
 
 struct Player {};
 struct Follower {};
+struct PatrolPoint {};
 
 struct InputEvent
 {
     Direction direction;
 };
 
+static constexpr std::pair<int, int> directionCoords(Direction direction)
+{
+    switch (direction)
+    {
+        case Direction::Up:
+            return { 0, -1 };
+        case Direction::Left:
+            return { -1, 0 };
+        case Direction::Down:
+            return { 0, 1 };
+        case Direction::Right:
+            return { 1, 0 };
+    }
+}
+
 struct GameLogic final : eng::GameLogicInterface
 {
     struct
     {
         uint32_t blank;
+        uint32_t enemy;
     } textures;
 
     std::map<Direction, uint32_t> directionInputMappings;
@@ -130,8 +142,6 @@ struct GameLogic final : eng::GameLogicInterface
     std::vector<Entity> entities;
     std::deque<uint32_t> freeEntities;
     std::vector<uint32_t> playerEntities;
-    // std::vector<Enemy> enemies;
-    std::vector<std::pair<uint32_t, uint32_t>> patrolPoints;
 
     double tickTimer = 0;
     static constexpr double tickInterval = 0.5;
@@ -224,27 +234,65 @@ struct GameLogic final : eng::GameLogicInterface
     void createEnemy(uint32_t x, uint32_t y, Direction facingDirection)
     {
         uint32_t entity = createEntity(x, y);
-        component<Enemy>().add(entity) = { .target = { x, y }, .facingDirection = facingDirection };
-        component<Sprite>().add(entity) = { .textureIndex = textures.blank, .color = glm::vec4(1, 0, 0, 1) };
+        component<Enemy>().add(entity) = { .facingDirection = facingDirection };
+        component<Sprite>().add(entity) = { .textureIndex = textures.enemy, };
+    }
+
+    void clampDeltaToMap(uint32_t x, uint32_t y, int& dx, int& dy)
+    {
+        if (dx < 0 && x == 0)
+        {
+            dx = 0;
+        }
+        if (dx > 0 && x == map.cells[0].size() - 1)
+        {
+            dx = 0;
+        }
+        if (dy < 0 && y == 0)
+        {
+            dy = 0;
+        }
+        if (dy > 0 && y == map.cells.size() - 1)
+        {
+            dy = 0;
+        }
+    }
+
+    void moveEntity(uint32_t id, uint32_t x, uint32_t y)
+    {
+        Entity& entity = entities.at(id);
+        if ((entity.x != x || entity.y != y) && x < map.cells.front().size() && y < map.cells.size())
+        {
+            Cell& newCell = map.cells[y][x];
+            if (!newCell.solid)
+            {
+                newCell.occupants.push_back(id);
+                Cell& oldCell = map.cells[entity.y][entity.x];
+                oldCell.occupants.erase(std::find(oldCell.occupants.begin(), oldCell.occupants.end(), id));
+                entity.x = x;
+                entity.y = y;
+            }
+        }
     }
 
     void init(eng::ResourceLoaderInterface& resourceLoader, eng::SceneInterface& scene, eng::InputInterface& input) override
     {
         textures.blank = resourceLoader.loadTexture("textures/blank.png");
+        textures.enemy = resourceLoader.loadTexture("textures/red_eye.png");
 
         using namespace std::string_view_literals;
         constexpr std::array mapRows {
             "XXXXXXXXXXXXXXXXXXXX"sv,
-            "X__________________X"sv,
+            "XT______T_T_______TX"sv,
             "X________XE________X"sv,
-            "X__________________X"sv,
-            "X___XE_____________X"sv,
-            "X______________XE__X"sv,
-            "X__________________X"sv,
+            "X__T_T__T_T________X"sv,
+            "X___XE________T_T__X"sv,
+            "X__T_T_________XE__X"sv,
+            "X_____________T_T__X"sv,
             "X________P_________X"sv,
             "X__________________X"sv,
             "X__________________X"sv,
-            "X__________________X"sv,
+            "XT________________TX"sv,
             "XXXXXXXXXXXXXXXXXXXX"sv,
         };
 
@@ -260,9 +308,6 @@ struct GameLogic final : eng::GameLogicInterface
                 {
                     case 'X':
                         map.cells[row][col].solid = true;
-                        break;
-                    case 'T':
-                        patrolPoints.push_back({ col, row });
                         break;
                     case '_':
                         break;
@@ -287,6 +332,15 @@ struct GameLogic final : eng::GameLogicInterface
             }
         }
 
+        if (auto it = markers.find('T'); it != markers.end())
+        {
+            for (auto&& [x, y] : it->second)
+            {
+                auto id = createEntity(x, y);
+                component<PatrolPoint>().add(id);
+            }
+        }
+
         directionInputMappings[Direction::Up] = input.createMapping();
         directionInputMappings[Direction::Left] = input.createMapping();
         directionInputMappings[Direction::Down] = input.createMapping();
@@ -307,85 +361,187 @@ struct GameLogic final : eng::GameLogicInterface
             InputEvent event = inputQueue.front();
             inputQueue.pop_front();
 
-            int dx = 0, dy = 0;
-            switch (event.direction)
-            {
-                case Direction::Up:
-                    dy = -1;
-                    break;
-                case Direction::Left:
-                    dx = -1;
-                    break;
-                case Direction::Down:
-                    dy = 1;
-                    break;
-                case Direction::Right:
-                    dx = 1;
-                    break;
-            }
-
             if (!playerEntities.empty())
             {
                 Entity& player = entities[playerEntities.front()];
-                if (dx < 0 && player.x == 0)
-                {
-                    dx = 0;
-                }
-                if (dx > 0 && player.x == map.cells[0].size() - 1)
-                {
-                    dx = 0;
-                }
-                if (dy < 0 && player.y == 0)
-                {
-                    dy = 0;
-                }
-                if (dy > 0 && player.y == map.cells.size() - 1)
-                {
-                    dy = 0;
-                }
+
+                auto [dx, dy] = directionCoords(event.direction);
+                clampDeltaToMap(player.x, player.y, dx, dy);
 
                 if (!map.cells[player.y + dy][player.x + dx].solid)
                 {
                     for (uint32_t i = playerEntities.size() - 1; i > 0; --i)
                     {
-                        entities[playerEntities[i]].x = entities[playerEntities[i - 1]].x;
-                        entities[playerEntities[i]].y = entities[playerEntities[i - 1]].y;
+                        auto& nextEntity = entities[playerEntities[i - 1]];
+                        moveEntity(playerEntities[i], nextEntity.x, nextEntity.y);
                     }
 
-                    player.x += dx;
-                    player.y += dy;
+                    moveEntity(playerEntities.front(), player.x + dx, player.y + dy);
                 }
             }
         }
 
-        component<Enemy>().forEach([this](Enemy& enemy, uint32_t id) {
-            auto& entity = entities.at(id);                    
-            auto [px, py] = enemy.target;
-            if (entity.x == px && entity.y == py)
-            {
-                bool foundTarget = false;
-                uint32_t targetIndex = 0;
-                for (uint32_t i = 0; i < patrolPoints.size(); ++i)
-                {
+        component<Enemy>().forEach([this](Enemy& enemy, uint32_t id)
+        {
+            auto& entity = entities.at(id);
 
+            auto [dx, dy] = directionCoords(enemy.facingDirection);
+            uint32_t testx = entity.x, testy = entity.y;
+            clampDeltaToMap(testx, testy, dx, dy);
+            uint32_t target = Entity::Invalid;
+
+            // scan forwards for player entities
+            while (dx != 0 || dy != 0)
+            {
+                testx += dx;
+                testy += dy;
+
+                const auto& cell = map.cells[testy][testx];
+                if (cell.solid)
+                {
+                    break;
                 }
+
+                if (auto it = std::find_if(cell.occupants.begin(), cell.occupants.end(), [&](auto oid) {
+                                return component<Player>().has(oid) || component<Follower>().has(oid);
+                            });
+                        it != cell.occupants.end())
+                {
+                    target = *it;
+                    break;
+                }
+                clampDeltaToMap(testx, testy, dx, dy);
             }
 
-            int dx = (int)px - (int)entity.x, dy = (int)py - (int)entity.y;
-            if (std::abs(dx) > std::abs(dy))
+            if (target != Entity::Invalid)
             {
-                dy = 0;
-                dx = glm::clamp(dx, -1, 1);
+                std::cout << "player detected" << std::endl;
             }
             else
             {
-                dx = 0;
-                dy = glm::clamp(dy, -1, 1);
+                // do we have a valid target?
+                if (enemy.target.x < map.cells.front().size() && enemy.target.y < map.cells.size())
+                {
+                    std::cout << "target initially valid" << std::endl;
+                    int toTargetX = (int)enemy.target.x - (int)entity.x;
+                    int toTargetY = (int)enemy.target.y - (int)entity.y;
+                    // did we reach it?
+                    if (toTargetX == 0 && toTargetY == 0)
+                    {
+                        std::cout << "reached target" << std::endl;
+                        enemy.target = { std::numeric_limits<uint32_t>::max(), std::numeric_limits<uint32_t>::max() };
+                    }
+                    else
+                    {
+                        // are we facing correct direction?
+                        auto [dx, dy] = directionCoords(enemy.facingDirection);
+                        if (dx != glm::sign(toTargetX) || dy != glm::sign(toTargetY))
+                        {
+                            std::cerr << "facing direction incorrect: to target: " << toTargetX << ", " << toTargetY << " direction: " << dx << ", " << dy << std::endl;
+                            enemy.target = { std::numeric_limits<uint32_t>::max(), std::numeric_limits<uint32_t>::max() };
+                        }
+                        else
+                        {
+                            // are we about to run into a wall?
+                            clampDeltaToMap(entity.x, entity.y, dx, dy);
+                            uint32_t testx = entity.x + dx, testy = entity.y + dy;
+                            const auto& cell = map.cells[testy][testx];
+                            if (cell.solid)
+                            {
+                                std::cout << "next cell solid" << std::endl;
+                                enemy.target = { std::numeric_limits<uint32_t>::max(), std::numeric_limits<uint32_t>::max() };
+                            }
+                        }
+                    }
+                }
+
+                // do we still have a valid target?
+                if (enemy.target.x < map.cells.front().size() && enemy.target.y < map.cells.size())
+                {
+                    std::cout << "target still valid" << std::endl;
+                    auto [dx, dy] = directionCoords(enemy.facingDirection);
+                    clampDeltaToMap(entity.x, entity.y, dx, dy);
+                    moveEntity(id, entity.x + dx, entity.y + dy);
+                }
+                else
+                {
+                    std::cout << "choosing new target" << std::endl;
+                    // scan in current direction, then each of the perpendicular directions
+                    const std::array scanDirections {
+                        enemy.facingDirection, 
+                        static_cast<Direction>((static_cast<int>(enemy.facingDirection) + 1) % 4),
+                        static_cast<Direction>((static_cast<int>(enemy.facingDirection) + 3) % 4),
+                    };
+
+                    bool anyScanFound = false;
+                    int bestDistance = 0;
+                    int bestIndex = 0;
+
+                    for (uint32_t i = 0; i < scanDirections.size(); ++i)
+                    {
+                        auto [dx, dy] = directionCoords(scanDirections[i]);
+                        clampDeltaToMap(entity.x, entity.y, dx, dy);
+                        uint32_t testx = entity.x + dx, testy = entity.y + dy;
+                        int distance = 0;
+
+                        while (dx != 0 || dy != 0)
+                        {
+                            const auto& cell = map.cells[testy][testx];
+                            if (cell.solid)
+                            {
+                                if (!anyScanFound && distance > bestDistance)
+                                {
+                                    bestDistance = distance;
+                                    bestIndex = i;
+                                }
+                                break;
+                            }
+
+                            ++distance;
+                            if (std::find_if(cell.occupants.begin(), cell.occupants.end(), [&](auto oid) {
+                                            return component<PatrolPoint>().has(oid);
+                                        }) != cell.occupants.end())
+                            {
+                                if (!anyScanFound || distance < bestDistance)
+                                {
+                                    anyScanFound = true;
+                                    bestDistance = distance;
+                                    bestIndex = i;
+                                }
+                                break;
+                            }
+
+                            clampDeltaToMap(testx, testy, dx, dy);
+                            testx += dx;
+                            testy += dy;
+                        }
+                    }
+
+                    std::cout << "current direction: " << (int)enemy.facingDirection << " next direction: " << (int)scanDirections[bestIndex] << std::endl;
+                    enemy.facingDirection = scanDirections[bestIndex];
+                    auto [dx, dy] = directionCoords(enemy.facingDirection);
+                    enemy.target = { entity.x + bestDistance * dx, entity.y + bestDistance * dy };
+                    std::cout << "current position: " << entity.x << ", " << entity.y << " target: " << entity.x + bestDistance * dx << ", " << entity.y + bestDistance * dy << std::endl;
+                }
             }
 
-            entity.x += dx;
-            entity.y += dy;
+            component<Sprite>().get(id).direction = enemy.facingDirection;
         });
+
+        /* for (uint32_t row = 0; row < map.cells.size(); ++row)
+        {
+            for (uint32_t col = 0; col < map.cells[row].size(); ++col)
+            {
+                auto& cell = map.cells[row][col];
+                for (uint32_t i = 0; i < cell.occupants.size(); ++i)
+                {
+                    for (uint32_t j = i + 1; j < cell.occupants.size(); ++j)
+                    {
+
+                    }
+                }
+            }
+        } */
     }
 
     void runFrame(eng::SceneInterface& scene, eng::InputInterface& input, const double deltaTime) override
@@ -425,9 +581,26 @@ struct GameLogic final : eng::GameLogicInterface
         component<Sprite>().forEach([&](const auto& sprite, auto& id)
         {
             const auto& entity = entities.at(id);
+            float angle;
+            switch (sprite.direction)
+            {
+                case Direction::Up:
+                    angle = glm::pi<float>();
+                    break;
+                case Direction::Left:
+                    angle = -glm::half_pi<float>();
+                    break;
+                case Direction::Down:
+                    angle = 0;
+                    break;
+                case Direction::Right:
+                    angle = glm::half_pi<float>();
+                    break;
+            }
             scene.instances().push_back(eng::Instance {
                         .position = glm::vec2(1 + 2 * entity.x, 2 * (map.cells.size() - entity.y) - 1),
                         .scale = glm::vec2(1, 1),
+                        .angle = angle,
                         .textureIndex = sprite.textureIndex,
                         .tintColor = sprite.color,
                     });
