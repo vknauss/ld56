@@ -13,7 +13,7 @@ namespace eng
         glm::vec2 scale = { 1, 1 };
         float angle = 0.0f;
         uint32_t textureIndex = 0;
-        glm::vec3 tintColor = { 1, 1, 1 };
+        glm::vec4 tintColor = { 1, 1, 1, 1 };
     };
 
     struct ResourceLoaderInterface

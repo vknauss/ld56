@@ -118,7 +118,7 @@ static vk::raii::Pipeline createPipeline(const vk::raii::Device& device, const s
 
     const std::array colorBlendAttachments = {
         vk::PipelineColorBlendAttachmentState {
-            .blendEnable = vk::False,
+            .blendEnable = vk::True,
             .srcColorBlendFactor = vk::BlendFactor::eSrcAlpha,
             .dstColorBlendFactor = vk::BlendFactor::eOneMinusSrcAlpha,
             .colorBlendOp = vk::BlendOp::eAdd,
@@ -366,7 +366,6 @@ void Renderer::updateFrame(const std::vector<Instance>& instances, const glm::ma
         writeData(writePointer, instance.textureIndex);
         writeData(writePointer, 0.0f); // padding
         writeData(writePointer, instance.tintColor);
-        writeData(writePointer, 0.0f); // padding
     }
 }
 
