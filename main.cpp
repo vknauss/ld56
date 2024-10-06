@@ -422,13 +422,11 @@ struct GameLogic final : eng::GameLogicInterface
                 // do we have a valid target?
                 if (enemy.target.x < map.cells.front().size() && enemy.target.y < map.cells.size())
                 {
-                    std::cout << "target initially valid" << std::endl;
                     int toTargetX = (int)enemy.target.x - (int)entity.x;
                     int toTargetY = (int)enemy.target.y - (int)entity.y;
                     // did we reach it?
                     if (toTargetX == 0 && toTargetY == 0)
                     {
-                        std::cout << "reached target" << std::endl;
                         enemy.target = { std::numeric_limits<uint32_t>::max(), std::numeric_limits<uint32_t>::max() };
                     }
                     else
@@ -448,7 +446,6 @@ struct GameLogic final : eng::GameLogicInterface
                             const auto& cell = map.cells[testy][testx];
                             if (cell.solid)
                             {
-                                std::cout << "next cell solid" << std::endl;
                                 enemy.target = { std::numeric_limits<uint32_t>::max(), std::numeric_limits<uint32_t>::max() };
                             }
                         }
@@ -458,14 +455,12 @@ struct GameLogic final : eng::GameLogicInterface
                 // do we still have a valid target?
                 if (enemy.target.x < map.cells.front().size() && enemy.target.y < map.cells.size())
                 {
-                    std::cout << "target still valid" << std::endl;
                     auto [dx, dy] = directionCoords(enemy.facingDirection);
                     clampDeltaToMap(entity.x, entity.y, dx, dy);
                     moveEntity(id, entity.x + dx, entity.y + dy);
                 }
                 else
                 {
-                    std::cout << "choosing new target" << std::endl;
                     // scan in current direction, then each of the perpendicular directions
                     const std::array scanDirections {
                         enemy.facingDirection, 
@@ -517,31 +512,14 @@ struct GameLogic final : eng::GameLogicInterface
                         }
                     }
 
-                    std::cout << "current direction: " << (int)enemy.facingDirection << " next direction: " << (int)scanDirections[bestIndex] << std::endl;
                     enemy.facingDirection = scanDirections[bestIndex];
                     auto [dx, dy] = directionCoords(enemy.facingDirection);
                     enemy.target = { entity.x + bestDistance * dx, entity.y + bestDistance * dy };
-                    std::cout << "current position: " << entity.x << ", " << entity.y << " target: " << entity.x + bestDistance * dx << ", " << entity.y + bestDistance * dy << std::endl;
                 }
             }
 
             component<Sprite>().get(id).direction = enemy.facingDirection;
         });
-
-        /* for (uint32_t row = 0; row < map.cells.size(); ++row)
-        {
-            for (uint32_t col = 0; col < map.cells[row].size(); ++col)
-            {
-                auto& cell = map.cells[row][col];
-                for (uint32_t i = 0; i < cell.occupants.size(); ++i)
-                {
-                    for (uint32_t j = i + 1; j < cell.occupants.size(); ++j)
-                    {
-
-                    }
-                }
-            }
-        } */
     }
 
     void runFrame(eng::SceneInterface& scene, eng::InputInterface& input, const double deltaTime) override
