@@ -102,8 +102,10 @@ struct Enemy
     Direction facingDirection;
 };
 
-struct Player {};
-struct Follower {};
+struct Friendly
+{
+};
+
 struct PatrolPoint {};
 
 struct InputEvent
@@ -126,12 +128,30 @@ static constexpr std::pair<int, int> directionCoords(Direction direction)
     }
 }
 
+static constexpr Direction directionFromDelta(int dx, int dy)
+{
+    if (dy < 0)
+    {
+        return Direction::Up;
+    }
+    if (dx < 0)
+    {
+        return Direction::Left;
+    }
+    if (dx > 0)
+    {
+        return Direction::Right;
+    }
+    return Direction::Down;
+}
+
 struct GameLogic final : eng::GameLogicInterface
 {
     struct
     {
         uint32_t blank;
-        uint32_t enemy;
+        std::map<Direction, uint32_t> friendly;
+        std::map<Direction, uint32_t> enemy;
     } textures;
 
     std::map<Direction, uint32_t> directionInputMappings;
@@ -216,7 +236,7 @@ struct GameLogic final : eng::GameLogicInterface
             auto&& [x, y] = *it;
             uint32_t entity = createEntity(x, y);
             playerEntities.push_back(entity);
-            component<Player>().add(entity);
+            component<Friendly>().add(entity);
             component<Sprite>().add(entity) = { .textureIndex = textures.blank, .color = glm::vec4(1, 1, 0, 1) };
             ++it;
         }
@@ -225,8 +245,8 @@ struct GameLogic final : eng::GameLogicInterface
             auto&& [x, y] = *it;
             uint32_t entity = createEntity(x, y);
             playerEntities.push_back(entity);
-            component<Follower>().add(entity);
-            component<Sprite>().add(entity) = { .textureIndex = textures.blank, .color = glm::vec4(0, 1, 1, 1) };
+            component<Friendly>().add(entity);
+            component<Sprite>().add(entity);
         }
     }
 
@@ -235,7 +255,7 @@ struct GameLogic final : eng::GameLogicInterface
     {
         uint32_t entity = createEntity(x, y);
         component<Enemy>().add(entity) = { .facingDirection = facingDirection };
-        component<Sprite>().add(entity) = { .textureIndex = textures.enemy, };
+        component<Sprite>().add(entity);
     }
 
     void clampDeltaToMap(uint32_t x, uint32_t y, int& dx, int& dy)
@@ -278,7 +298,18 @@ struct GameLogic final : eng::GameLogicInterface
     void init(eng::ResourceLoaderInterface& resourceLoader, eng::SceneInterface& scene, eng::InputInterface& input) override
     {
         textures.blank = resourceLoader.loadTexture("textures/blank.png");
-        textures.enemy = resourceLoader.loadTexture("textures/red_eye.png");
+        textures.friendly = {
+            { Direction::Up, resourceLoader.loadTexture("textures/GubgubSpriteBack.png") },
+            { Direction::Left, resourceLoader.loadTexture("textures/GubgubSpriteSideLeft.png") },
+            { Direction::Down, resourceLoader.loadTexture("textures/GubgubSpriteFront.png") },
+            { Direction::Right, resourceLoader.loadTexture("textures/GubgubSpriteSideRight.png") },
+        };
+        textures.enemy = {
+            { Direction::Up, resourceLoader.loadTexture("textures/NubnubSpriteBack.png") },
+            { Direction::Left, resourceLoader.loadTexture("textures/NubnubSpriteSideLeft.png") },
+            { Direction::Down, resourceLoader.loadTexture("textures/NubnubSpriteFront.png") },
+            { Direction::Right, resourceLoader.loadTexture("textures/NubnubSpriteSideRight.png") },
+        };
 
         using namespace std::string_view_literals;
         constexpr std::array mapRows {
@@ -377,6 +408,14 @@ struct GameLogic final : eng::GameLogicInterface
                     }
 
                     moveEntity(playerEntities.front(), player.x + dx, player.y + dy);
+
+                    for (uint32_t i = 1; i < playerEntities.size(); ++i)
+                    {
+                        auto& entity = entities[playerEntities[i]];
+                        auto& nextEntity = entities[playerEntities[i - 1]];
+                        auto direction = directionFromDelta((int)nextEntity.x - (int)entity.x, (int)nextEntity.y - (int)entity.y);
+                        component<Sprite>().get(playerEntities[i]).textureIndex = textures.friendly.at(direction);
+                    }
                 }
             }
         }
@@ -403,7 +442,7 @@ struct GameLogic final : eng::GameLogicInterface
                 }
 
                 if (auto it = std::find_if(cell.occupants.begin(), cell.occupants.end(), [&](auto oid) {
-                                return component<Player>().has(oid) || component<Follower>().has(oid);
+                                return component<Friendly>().has(oid);
                             });
                         it != cell.occupants.end())
                 {
@@ -518,7 +557,7 @@ struct GameLogic final : eng::GameLogicInterface
                 }
             }
 
-            component<Sprite>().get(id).direction = enemy.facingDirection;
+            component<Sprite>().get(id).textureIndex = textures.enemy.at(enemy.facingDirection);
         });
     }
 

@@ -1,6 +1,13 @@
 texture_files = [
   'blank.png',
-  'red_eye.png',
+  'GubgubSpriteBack.png',
+  'GubgubSpriteFront.png',
+  'GubgubSpriteSideLeft.png',
+  'GubgubSpriteSideRight.png',
+  'NubnubSpriteBack.png',
+  'NubnubSpriteFront.png',
+  'NubnubSpriteSideLeft.png',
+  'NubnubSpriteSideRight.png',
 ]
 
 foreach file : texture_files
