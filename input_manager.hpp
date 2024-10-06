@@ -35,12 +35,8 @@ namespace eng
             uint32_t inputIndex;
         };
 
-        static void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods);
-        static void mouseButtonCallback(GLFWwindow* window, int button, int action, int mods);
-        static void cursorPositionCallback(GLFWwindow* window, double x, double y);
-
     public:
-        explicit InputManager(GLFWwindow* window);
+        explicit InputManager();
 
         uint32_t createMapping() override;
         void mapKey(const uint32_t mapping, const int scancode) override;
@@ -50,6 +46,10 @@ namespace eng
         double getReal(const uint32_t mapping, const RealStateEvent event) const override;
 
         void nextFrame();
+
+        void handleKey(int key, int scancode, int action, int mods);
+        void handleMouseButton(int button, int action, int mods);
+        void handleCursorPosition(double x, double y);
 
     private:
         void map(const uint32_t mapping, const uint32_t inputIndex);

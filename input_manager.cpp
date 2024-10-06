@@ -4,31 +4,24 @@
 
 using eng::InputManager;
 
-void InputManager::keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods)
+void InputManager::handleKey(int key, int scancode, int action, int mods)
 {
-    auto& inputManager = *static_cast<InputManager*>(glfwGetWindowUserPointer(window));
-    inputManager.updateStateBoolean(inputManager.keyMap, scancode, action != GLFW_RELEASE);
+    updateStateBoolean(keyMap, scancode, action != GLFW_RELEASE);
 }
 
-void InputManager::mouseButtonCallback(GLFWwindow* window, int button, int action, int mods)
+void InputManager::handleMouseButton(int button, int action, int mods)
 {
-    auto& inputManager = *static_cast<InputManager*>(glfwGetWindowUserPointer(window));
-    inputManager.updateStateBoolean(inputManager.mouseButtonMap, button, action != GLFW_RELEASE);
+    updateStateBoolean(mouseButtonMap, button, action != GLFW_RELEASE);
 }
 
-void InputManager::cursorPositionCallback(GLFWwindow* window, double x, double y)
+void InputManager::handleCursorPosition(double x, double y)
 {
-    auto& inputManager = *static_cast<InputManager*>(glfwGetWindowUserPointer(window));
-    inputManager.updateStateReal(inputManager.cursorMap, static_cast<int>(CursorAxis::X), x);
-    inputManager.updateStateReal(inputManager.cursorMap, static_cast<int>(CursorAxis::Y), y);
+    updateStateReal(cursorMap, static_cast<int>(CursorAxis::X), x);
+    updateStateReal(cursorMap, static_cast<int>(CursorAxis::Y), y);
 }
 
-InputManager::InputManager(GLFWwindow* window)
+InputManager::InputManager()
 {
-    glfwSetWindowUserPointer(window, this);
-    glfwSetKeyCallback(window, &keyCallback);
-    glfwSetMouseButtonCallback(window, &mouseButtonCallback);
-    glfwSetCursorPosCallback(window, &cursorPositionCallback);
     inputs.push_back(Input {});
 }
 

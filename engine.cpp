@@ -252,6 +252,39 @@ private:
     glm::mat4 projection_;
 };
 
+struct AppCallbackData
+{
+    Swapchain& swapchain;
+    InputManager& inputManager;
+};
+
+static void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods)
+{
+    auto& callbackData = *static_cast<AppCallbackData*>(glfwGetWindowUserPointer(window));
+    callbackData.inputManager.handleKey(key, scancode, action, mods);
+}
+
+static void mouseButtonCallback(GLFWwindow* window, int button, int action, int mods)
+{
+    auto& callbackData = *static_cast<AppCallbackData*>(glfwGetWindowUserPointer(window));
+    callbackData.inputManager.handleMouseButton(button, action, mods);
+}
+
+static void cursorPositionCallback(GLFWwindow* window, double x, double y)
+{
+    auto& callbackData = *static_cast<AppCallbackData*>(glfwGetWindowUserPointer(window));
+    callbackData.inputManager.handleCursorPosition(x, y);
+}
+
+static void framebufferSizeCallback(GLFWwindow* window, int width, int height)
+{
+    auto& callbackData = *static_cast<AppCallbackData*>(glfwGetWindowUserPointer(window));
+    if (width != callbackData.swapchain.extent.width || height != callbackData.swapchain.extent.height)
+    {
+        callbackData.swapchain.recreate(vk::Extent2D{ static_cast<uint32_t>(width), static_cast<uint32_t>(height) });
+    }
+}
+
 void eng::run(GameLogicInterface& gameLogic, const ApplicationInfo& applicationInfo)
 {
     GLFWWrapper glfwWrapper;
@@ -291,7 +324,17 @@ void eng::run(GameLogicInterface& gameLogic, const ApplicationInfo& applicationI
 
     ResourceLoader resourceLoader(textureLoader, textures);
     Scene scene;
-    InputManager inputManager(window);
+    InputManager inputManager;
+
+    AppCallbackData appCallbackData {
+        .swapchain = swapchain,
+        .inputManager = inputManager,
+    };
+    glfwSetWindowUserPointer(window, &appCallbackData);
+    glfwSetKeyCallback(window, keyCallback);
+    glfwSetMouseButtonCallback(window, mouseButtonCallback);
+    glfwSetCursorPosCallback(window, cursorPositionCallback);
+    glfwSetFramebufferSizeCallback(window, framebufferSizeCallback);
 
     gameLogic.init(resourceLoader, scene, inputManager);
     textureLoader.commit();
