@@ -4,6 +4,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <algorithm>
 #include <array>
+#include <stdexcept>
 #include <deque>
 #include <map>
 #include <memory>
