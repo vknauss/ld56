@@ -4,3 +4,6 @@
 [submodule "subprojects/VulkanMemoryAllocator-Hpp"]
 	path = subprojects/VulkanMemoryAllocator-Hpp
 	url = https://github.com/YaaZ/VulkanMemoryAllocator-Hpp.git
+[submodule "subprojects/glfw"]
+	path = subprojects/glfw
+	url = https://github.com/glfw/glfw.git

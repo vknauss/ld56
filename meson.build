@@ -1,6 +1,8 @@
 project('ld56', 'cpp',
   default_options: {
     'cpp_std': 'c++20',
+    'default_library': 'static',
+    'prefer_static': true,
   })
 
 fs = import('fs')
@@ -8,12 +10,13 @@ cmake = import('cmake')
 
 vma_dep = cmake.subproject('VulkanMemoryAllocator-Hpp').dependency('VulkanMemoryAllocator')
 vma_hpp_dep = cmake.subproject('VulkanMemoryAllocator-Hpp').dependency('VulkanMemoryAllocator-Hpp')
+glfw_dep = cmake.subproject('glfw').dependency('glfw')
 
 executable('gubgub',
   dependencies: [
-    dependency('glfw3'),
     dependency('glm'),
     dependency('vulkan'),
+    glfw_dep,
     vma_dep,
     vma_hpp_dep,
   ],
