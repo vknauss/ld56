@@ -152,11 +152,6 @@ struct Enemy
     uint32_t lineFrame = 0;
 };
 
-struct Leader
-{
-    Direction facingDirection = Direction::Down;
-};
-
 struct Friendly {};
 
 struct Neutral
@@ -251,6 +246,7 @@ struct GameLogic final : eng::GameLogicInterface
         CharacterTextureSet friendly;
         std::vector<uint32_t> dotline;
         std::vector<uint32_t> zap;
+        std::vector<uint32_t> zapHit;
         uint32_t arrow;
         uint32_t font;
     } textures;
@@ -356,7 +352,6 @@ struct GameLogic final : eng::GameLogicInterface
             uint32_t entity = createEntity(x, y);
             playerEntities.push_back(entity);
             component<Friendly>().add(entity);
-            component<Leader>().add(entity);
             component<Sprite>().add(entity) = { .color = glm::vec4(1, 1, 0, 1) };
             component<Solid>().add(entity);
             component<CharacterAnimator>().add(entity) = {
@@ -756,6 +751,14 @@ struct GameLogic final : eng::GameLogicInterface
             resourceLoader.loadTexture("textures/Zap5.png"),
             resourceLoader.loadTexture("textures/Zap6.png"),
         };
+        textures.zapHit = {
+            resourceLoader.loadTexture("textures/ZapHit1.png"),
+            resourceLoader.loadTexture("textures/ZapHit2.png"),
+            resourceLoader.loadTexture("textures/ZapHit3.png"),
+            resourceLoader.loadTexture("textures/ZapHit4.png"),
+            resourceLoader.loadTexture("textures/ZapHit5.png"),
+            resourceLoader.loadTexture("textures/ZapHit6.png"),
+        };
         textures.arrow = resourceLoader.loadTexture("textures/arrow.png");
         textures.font = resourceLoader.loadTexture("textures/font.png");
         loadEnemyTextures(resourceLoader);
@@ -802,7 +805,7 @@ struct GameLogic final : eng::GameLogicInterface
         if (auto it = markers.find('P'); it != markers.end() && !it->second.empty())
         {
             auto&& [x, y] = it->second.front();
-            initPlayer({ {x, y}, /* {x-1, y}, {x-1, y-1} */ });
+            initPlayer({ {x, y} });
         }
         if (auto it = markers.find('E'); it != markers.end())
         {
@@ -883,7 +886,7 @@ struct GameLogic final : eng::GameLogicInterface
             if (!playerEntities.empty())
             {
                 Entity& player = entities[playerEntities.front()];
-                component<Leader>().get(playerEntities.front()).facingDirection = event.direction;
+                component<CharacterAnimator>().get(playerEntities.front()).direction = event.direction;
 
                 auto [dx, dy] = directionCoords(event.direction);
                 clampDeltaToMap(player.x, player.y, dx, dy);
@@ -957,20 +960,15 @@ struct GameLogic final : eng::GameLogicInterface
                             }
                         }
                     }
-
                 }
             }
         }
 
-        if (!playerEntities.empty())
+        for (uint32_t i = 1; i < playerEntities.size(); ++i)
         {
-            component<CharacterAnimator>().get(playerEntities.front()).direction = component<Leader>().get(playerEntities.front()).facingDirection;
-            for (uint32_t i = 1; i < playerEntities.size(); ++i)
-            {
-                auto& entity = entities[playerEntities[i]];
-                auto& nextEntity = entities[playerEntities[i - 1]];
-                component<CharacterAnimator>().get(playerEntities[i]).direction = directionFromDelta((int)nextEntity.x - (int)entity.x, (int)nextEntity.y - (int)entity.y);
-            }
+            auto& entity = entities[playerEntities[i]];
+            auto& nextEntity = entities[playerEntities[i - 1]];
+            component<CharacterAnimator>().get(playerEntities[i]).direction = directionFromDelta((int)nextEntity.x - (int)entity.x, (int)nextEntity.y - (int)entity.y);
         }
 
         component<Text>().get(textTestEntity).text = "GubGubs: " + std::to_string(playerEntities.size()) + " / " + std::to_string(entitiesNeeded);
@@ -1130,6 +1128,7 @@ struct GameLogic final : eng::GameLogicInterface
             const auto& entity = entities[id];
 
             uint32_t textureIndex;
+            uint32_t endTextureIndex;
             glm::vec4 tintColor = { 1, 1, 1, 1 };
             if (enemy.state == Enemy::State::Attack)
             {
@@ -1138,6 +1137,7 @@ struct GameLogic final : eng::GameLogicInterface
                     enemy.lineFrame = 0;
                 }
                 textureIndex = textures.zap[enemy.lineFrame];
+                endTextureIndex = textures.zapHit[enemy.lineFrame];
             }
             else
             {
@@ -1146,6 +1146,7 @@ struct GameLogic final : eng::GameLogicInterface
                     enemy.lineFrame = 0;
                 }
                 textureIndex = textures.dotline[enemy.lineFrame];
+                endTextureIndex = textures.dotline[enemy.lineFrame];
                 if (enemy.state == Enemy::State::Alert)
                 {
                     tintColor = { 1, 1, 0, 1 };
@@ -1164,10 +1165,16 @@ struct GameLogic final : eng::GameLogicInterface
                             [&](auto oid){ return component<Solid>().has(oid); });
                         it != cell.occupants.end())
                     {
-                        if (!(component<Friendly>().has(*it) || component<Neutral>().has(*it)))
+                        if (component<Friendly>().has(*it) || component<Neutral>().has(*it))
                         {
-                            return true;
+                            scene.instances().push_back(eng::Instance {
+                                        .position = glm::vec2(cell.x + 0.5, maxTilesVertical - cell.y - 0.5),
+                                        .angle = angle,
+                                        .textureIndex = endTextureIndex,
+                                        .tintColor = tintColor,
+                                    });
                         }
+                        return true;
                     }
                     scene.instances().push_back(eng::Instance {
                                 .position = glm::vec2(cell.x + 0.5, maxTilesVertical - cell.y - 0.5),
