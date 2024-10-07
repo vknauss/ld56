@@ -567,11 +567,20 @@ struct GameLogic final : eng::GameLogicInterface
                             [&](const Cell& cell, uint32_t distance)
                             {
                                 uint32_t priority = 0;
+                                bool blocked = false;
                                 for (auto oid : cell.occupants)
                                 {
                                     if (component<Solid>().has(oid))
                                     {
-                                        priority = component<Friendly>().has(oid) ? 2 : 0;
+                                        if (component<Friendly>().has(oid))
+                                        {
+                                            priority = 2;
+                                        }
+                                        else
+                                        {
+                                            priority = 0;
+                                            blocked = true;
+                                        }
                                         break;
                                     }
                                     if (component<PatrolPoint>().has(oid))
@@ -586,7 +595,7 @@ struct GameLogic final : eng::GameLogicInterface
                                     bestDistance = distance;
                                     bestIndex = i;
                                 }
-                                else if (bestPriority == 0 && distance > bestDistance)
+                                else if (bestPriority == 0 && !blocked && distance > bestDistance)
                                 {
                                     bestDistance = distance;
                                     bestIndex = i;
@@ -595,7 +604,7 @@ struct GameLogic final : eng::GameLogicInterface
                             });
                     }
 
-                    shouldMoveForward = (scanDirections[bestIndex] == enemy.facingDirection);
+                    shouldMoveForward = (bestDistance > 0 && scanDirections[bestIndex] == enemy.facingDirection);
                     enemy.facingDirection = scanDirections[bestIndex];
                     auto [dx, dy] = directionCoords(enemy.facingDirection);
                     enemy.target = { entity.x + bestDistance * dx, entity.y + bestDistance * dy };
@@ -826,6 +835,8 @@ struct GameLogic final : eng::GameLogicInterface
             }
         }
 
+        entitiesNeeded = playerEntities.size() + component<Enemy>().entities.size();
+
         directionInputMappings[Direction::Up] = input.createMapping();
         directionInputMappings[Direction::Left] = input.createMapping();
         directionInputMappings[Direction::Down] = input.createMapping();
@@ -951,6 +962,8 @@ struct GameLogic final : eng::GameLogicInterface
                 component<CharacterAnimator>().get(playerEntities[i]).direction = directionFromDelta((int)nextEntity.x - (int)entity.x, (int)nextEntity.y - (int)entity.y);
             }
         }
+
+        component<Text>().get(textTestEntity).text = "GubGubs: " + std::to_string(playerEntities.size()) + " / " + std::to_string(entitiesNeeded);
 
         component<Neutral>().forEach([this](Neutral& neutral, uint32_t id)
         {
