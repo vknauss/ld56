@@ -116,11 +116,6 @@ struct Cell
     std::vector<uint32_t> occupants;
 };
 
-struct Map
-{
-    std::vector<std::vector<Cell>> cells;
-};
-
 struct CharacterTextureSet
 {
     std::vector<uint32_t> front;
@@ -237,8 +232,20 @@ static constexpr float directionAngle(Direction direction)
     }
 }
 
+
+struct Map
+{
+    std::vector<std::string_view> rows;
+    uint32_t entitiesNeeded;
+};
+
+using namespace std::string_view_literals;
+
 struct GameLogic final : eng::GameLogicInterface
 {
+    std::vector<Map> maps;
+    uint32_t currentLevel = 0;
+
     struct
     {
         uint32_t blank;
@@ -255,7 +262,7 @@ struct GameLogic final : eng::GameLogicInterface
 
     std::map<size_t, std::unique_ptr<ComponentArrayBase>> componentArrays;
 
-    Map map;
+    std::vector<std::vector<Cell>> cells;
     std::vector<Entity> entities;
     std::deque<uint32_t> freeEntities;
     std::vector<uint32_t> playerEntities;
@@ -313,7 +320,7 @@ struct GameLogic final : eng::GameLogicInterface
             entities.emplace_back();
         }
         entities.at(index) = Entity{ .x = x, .y = y, .prevx = x, .prevy = y, .alive = true };
-        map.cells[y][x].occupants.push_back(index);
+        cells[y][x].occupants.push_back(index);
         return index;
     }
 
@@ -330,7 +337,7 @@ struct GameLogic final : eng::GameLogicInterface
                 }
             }
 
-            auto& cell = map.cells[entities[index].y][entities[index].x];
+            auto& cell = cells[entities[index].y][entities[index].x];
             cell.occupants.erase(std::find(cell.occupants.begin(), cell.occupants.end(), index));
 
             entity.alive = false;
@@ -390,7 +397,7 @@ struct GameLogic final : eng::GameLogicInterface
         {
             dx = 0;
         }
-        if (dx > 0 && x == map.cells[0].size() - 1)
+        if (dx > 0 && x == cells[0].size() - 1)
         {
             dx = 0;
         }
@@ -398,7 +405,7 @@ struct GameLogic final : eng::GameLogicInterface
         {
             dy = 0;
         }
-        if (dy > 0 && y == map.cells.size() - 1)
+        if (dy > 0 && y == cells.size() - 1)
         {
             dy = 0;
         }
@@ -407,11 +414,11 @@ struct GameLogic final : eng::GameLogicInterface
     void moveEntity(uint32_t id, uint32_t x, uint32_t y)
     {
         Entity& entity = entities.at(id);
-        if ((entity.x != x || entity.y != y) && x < map.cells.front().size() && y < map.cells.size())
+        if ((entity.x != x || entity.y != y) && x < cells.front().size() && y < cells.size())
         {
-            Cell& newCell = map.cells[y][x];
+            Cell& newCell = cells[y][x];
             newCell.occupants.push_back(id);
-            Cell& oldCell = map.cells[entity.y][entity.x];
+            Cell& oldCell = cells[entity.y][entity.x];
             oldCell.occupants.erase(std::find(oldCell.occupants.begin(), oldCell.occupants.end(), id));
             entity.x = x, entity.y = y;
         }
@@ -427,7 +434,7 @@ struct GameLogic final : eng::GameLogicInterface
         while ((limit == 0 || distance < limit) && (dx != 0 || dy != 0))
         {
             ++distance;
-            const auto& cell = map.cells[testy][testx];
+            const auto& cell = cells[testy][testx];
             if (cell.solid)
             {
                 return false;
@@ -509,7 +516,7 @@ struct GameLogic final : eng::GameLogicInterface
             else
             {
                 enemy.state = Enemy::State::Patrolling;
-                bool validTarget = enemy.target.x < map.cells.front().size() && enemy.target.y < map.cells.size();
+                bool validTarget = enemy.target.x < cells.front().size() && enemy.target.y < cells.size();
                 if (validTarget)
                 {
                     int toTargetX = (int)enemy.target.x - (int)entity.x;
@@ -532,7 +539,7 @@ struct GameLogic final : eng::GameLogicInterface
                             // are we about to run into a wall?
                             clampDeltaToMap(entity.x, entity.y, dx, dy);
                             uint32_t testx = entity.x + dx, testy = entity.y + dy;
-                            const auto& cell = map.cells[testy][testx];
+                            const auto& cell = cells[testy][testx];
                             if (cell.solid || std::find_if(cell.occupants.begin(), cell.occupants.end(),
                                         [&](auto oid) { return component<Solid>().has(oid); }) != cell.occupants.end())
                             {
@@ -734,69 +741,35 @@ struct GameLogic final : eng::GameLogicInterface
         };
     }
 
-    void init(eng::ResourceLoaderInterface& resourceLoader, eng::SceneInterface& scene, eng::InputInterface& input) override
+    void loadLevel(uint32_t index)
     {
-        textures.blank = resourceLoader.loadTexture("textures/blank.png");
-        textures.dotline = {
-            resourceLoader.loadTexture("textures/Dotline1.png"),
-            resourceLoader.loadTexture("textures/Dotline2.png"),
-            resourceLoader.loadTexture("textures/Dotline3.png"),
-            resourceLoader.loadTexture("textures/Dotline4.png"),
-        };
-        textures.zap = {
-            resourceLoader.loadTexture("textures/Zap1.png"),
-            resourceLoader.loadTexture("textures/Zap2.png"),
-            resourceLoader.loadTexture("textures/Zap3.png"),
-            resourceLoader.loadTexture("textures/Zap4.png"),
-            resourceLoader.loadTexture("textures/Zap5.png"),
-            resourceLoader.loadTexture("textures/Zap6.png"),
-        };
-        textures.zapHit = {
-            resourceLoader.loadTexture("textures/ZapHit1.png"),
-            resourceLoader.loadTexture("textures/ZapHit2.png"),
-            resourceLoader.loadTexture("textures/ZapHit3.png"),
-            resourceLoader.loadTexture("textures/ZapHit4.png"),
-            resourceLoader.loadTexture("textures/ZapHit5.png"),
-            resourceLoader.loadTexture("textures/ZapHit6.png"),
-        };
-        textures.arrow = resourceLoader.loadTexture("textures/arrow.png");
-        textures.font = resourceLoader.loadTexture("textures/font.png");
-        loadEnemyTextures(resourceLoader);
-        loadFriendlyTextures(resourceLoader);
+        const Map& map = maps[index];
+        componentArrays.clear();
+        entities.clear();
+        freeEntities.clear();
+        playerEntities.clear();
+        inputQueue.clear();
+        inputSpriteEntities.clear();
+        textTestEntity = Entity::Invalid;
 
-        using namespace std::string_view_literals;
-        constexpr std::array mapRows {
-            "XXXXXXXXXXXXXXXXXXXX"sv,
-            "XT______T_T_______TX"sv,
-            "X________XE________X"sv,
-            "X__T_T__T_T________X"sv,
-            "X___XE________T_T__X"sv,
-            "X__T_T_________XE__X"sv,
-            "X_____________T_T__X"sv,
-            "X________P_________X"sv,
-            "X__________________D"sv,
-            "X__________________X"sv,
-            "XT________________TX"sv,
-            "XXXXXXXXXXXXXXXXXXXX"sv,
-        };
-
-        map.cells.resize(mapRows.size());
+        cells.clear();
+        cells.resize(map.rows.size());
         std::map<char, std::vector<std::pair<uint32_t, uint32_t>>> markers;
-        for (uint32_t row = 0; row < mapRows.size(); ++row)
+        for (uint32_t row = 0; row < map.rows.size(); ++row)
         {
-            map.cells[row].resize(mapRows[row].size());
-            for (uint32_t col = 0; col < mapRows[row].size(); ++col)
+            cells[row].resize(map.rows[row].size());
+            for (uint32_t col = 0; col < map.rows[row].size(); ++col)
             {
-                map.cells[row][col] = Cell { .x = col, .y = row, };
-                switch (mapRows[row][col])
+                cells[row][col] = Cell { .x = col, .y = row, };
+                switch (map.rows[row][col])
                 {
                     case 'X':
-                        map.cells[row][col].solid = true;
+                        cells[row][col].solid = true;
                         break;
                     case '_':
                         break;
                     default:
-                        markers[mapRows[row][col]].push_back({ col, row });
+                        markers[map.rows[row][col]].push_back({ col, row });
                         break;
                 }
             }
@@ -838,7 +811,45 @@ struct GameLogic final : eng::GameLogicInterface
             }
         }
 
-        entitiesNeeded = playerEntities.size() + component<Enemy>().entities.size();
+        textTestEntity = createEntity(0, 0);
+        component<Text>().add(textTestEntity) = Text{
+            .text = "GubGubs",
+            .foreground = { 0.8, 0.2, 0.0, 1 },
+        };
+
+        entitiesNeeded = map.entitiesNeeded;
+        currentLevel = index;
+    }
+
+    void init(eng::ResourceLoaderInterface& resourceLoader, eng::SceneInterface& scene, eng::InputInterface& input) override
+    {
+        textures.blank = resourceLoader.loadTexture("textures/blank.png");
+        textures.dotline = {
+            resourceLoader.loadTexture("textures/Dotline1.png"),
+            resourceLoader.loadTexture("textures/Dotline2.png"),
+            resourceLoader.loadTexture("textures/Dotline3.png"),
+            resourceLoader.loadTexture("textures/Dotline4.png"),
+        };
+        textures.zap = {
+            resourceLoader.loadTexture("textures/Zap1.png"),
+            resourceLoader.loadTexture("textures/Zap2.png"),
+            resourceLoader.loadTexture("textures/Zap3.png"),
+            resourceLoader.loadTexture("textures/Zap4.png"),
+            resourceLoader.loadTexture("textures/Zap5.png"),
+            resourceLoader.loadTexture("textures/Zap6.png"),
+        };
+        textures.zapHit = {
+            resourceLoader.loadTexture("textures/ZapHit1.png"),
+            resourceLoader.loadTexture("textures/ZapHit2.png"),
+            resourceLoader.loadTexture("textures/ZapHit3.png"),
+            resourceLoader.loadTexture("textures/ZapHit4.png"),
+            resourceLoader.loadTexture("textures/ZapHit5.png"),
+            resourceLoader.loadTexture("textures/ZapHit6.png"),
+        };
+        textures.arrow = resourceLoader.loadTexture("textures/arrow.png");
+        textures.font = resourceLoader.loadTexture("textures/font.png");
+        loadEnemyTextures(resourceLoader);
+        loadFriendlyTextures(resourceLoader);
 
         directionInputMappings[Direction::Up] = input.createMapping();
         directionInputMappings[Direction::Left] = input.createMapping();
@@ -850,11 +861,45 @@ struct GameLogic final : eng::GameLogicInterface
         input.mapKey(directionInputMappings[Direction::Down], glfwGetKeyScancode(GLFW_KEY_S));
         input.mapKey(directionInputMappings[Direction::Right], glfwGetKeyScancode(GLFW_KEY_D));
 
-        textTestEntity = createEntity(0, 0);
-        component<Text>().add(textTestEntity) = Text{
-            .text = "GubGubs",
-            .foreground = { 0.8, 0.2, 0.0, 1 },
+        maps = {
+            Map {
+                .rows = {
+                    "XXXXXXXXXXXXXXXXXXXX"sv,
+                    "XT______T_T_______TX"sv,
+                    "X________XE________X"sv,
+                    "X__T_T__T_T________X"sv,
+                    "X___XE________T_T__X"sv,
+                    "X__T_T_________XE__X"sv,
+                    "X_____________T_T__X"sv,
+                    "X________P_________X"sv,
+                    "X__________________D"sv,
+                    "X__________________X"sv,
+                    "XT________________TX"sv,
+                    "XXXXXXXXXXXXXXXXXXXX"sv,
+                },
+                .entitiesNeeded = 4,
+            },
+
+            Map {
+                .rows = {
+                    "XXXXXXXXXXXXXXXXXXXX"sv,
+                    "X_T_______E______T_X"sv,
+                    "X__XXXXXXXXXXXXXX__X"sv,
+                    "X__X________E____T_X"sv,
+                    "X__XT___________T__X"sv,
+                    "X__X_XXXXXXXXXXX___X"sv,
+                    "X_EXT_____TXT___T__X"sv,
+                    "X__X_____P_X_______X"sv,
+                    "X__X_______X__E____D"sv,
+                    "X__X_______X_______X"sv,
+                    "X_T_T_____T_T______X"sv,
+                    "XXXXXXXXXXXXXXXXXXXX"sv,
+                },
+                .entitiesNeeded = 5,
+            },
         };
+
+        loadLevel(0);
     }
 
     void gameTick()
@@ -891,7 +936,7 @@ struct GameLogic final : eng::GameLogicInterface
                 auto [dx, dy] = directionCoords(event.direction);
                 clampDeltaToMap(player.x, player.y, dx, dy);
 
-                const auto& cell = map.cells[player.y + dy][player.x + dx];
+                const auto& cell = cells[player.y + dy][player.x + dx];
                 if (!cell.solid)
                 {
                     bool blocked = false;
@@ -948,7 +993,7 @@ struct GameLogic final : eng::GameLogicInterface
                             }
 
                             moveEntity(playerEntities.front(), player.x + dx, player.y + dy);
-                            const auto& cell = map.cells[player.y][player.x];
+                            const auto& cell = cells[player.y][player.x];
                             if (auto it = std::find_if(cell.occupants.begin(), cell.occupants.end(),
                                     [&](auto oid){ return component<Door>().has(oid); });
                                 it != cell.occupants.end())
@@ -956,6 +1001,10 @@ struct GameLogic final : eng::GameLogicInterface
                                 if (component<Door>().get(*it).open)
                                 {
                                     std::cout << "win condition" << std::endl;
+                                    if (currentLevel + 1 < maps.size())
+                                    {
+                                        loadLevel(currentLevel + 1);
+                                    }
                                 }
                             }
                         }
@@ -1094,11 +1143,11 @@ struct GameLogic final : eng::GameLogicInterface
 
 
         scene.instances().clear();
-        for (uint32_t i = 0; i < map.cells.size(); ++i)
+        for (uint32_t i = 0; i < cells.size(); ++i)
         {
-            for (uint32_t j = 0; j < map.cells[i].size(); ++j)
+            for (uint32_t j = 0; j < cells[i].size(); ++j)
             {
-                if (map.cells[i][j].solid)
+                if (cells[i][j].solid)
                 {
                     scene.instances().push_back(eng::Instance {
                                 .position = glm::vec2(j + 0.5, maxTilesVertical - i - 0.5),
