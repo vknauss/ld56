@@ -290,6 +290,9 @@ struct GameLogic final : eng::GameLogicInterface
     int tweenFrame = 0;
     float tween = 0;
 
+    glm::vec2 mapViewCenter;
+    glm::vec2 prevMapViewCenter;
+
     static constexpr int maxTilesVertical = 12;
     static constexpr int maxTilesHorizontal = 20;
     static constexpr int texelsPerTile = 32;
@@ -846,7 +849,10 @@ struct GameLogic final : eng::GameLogicInterface
         {
             auto&& [x, y] = it->second.front();
             initPlayer({ {x, y} });
+            mapViewCenter = { x + 0.5, maxTilesVertical - y - 0.5 };
+            prevMapViewCenter = mapViewCenter;
         }
+
         if (auto it = markers.find('E'); it != markers.end())
         {
             for (auto&& [x, y] : it->second)
@@ -885,6 +891,7 @@ struct GameLogic final : eng::GameLogicInterface
         gubgubCounterText = createEntity();
         component<Text>().add(gubgubCounterText) = Text{
             .text = "GubGubs",
+            .background = { 0, 0, 0, 1 },
             .foreground = { 0.8, 0.2, 0.0, 1 },
             .x = 0,
             .y = 0,
@@ -894,6 +901,7 @@ struct GameLogic final : eng::GameLogicInterface
         {
             component<Text>().add(createEntity()) = {
                 .text = map.levelText[i],
+                .scale = { 0.5, 0.5 },
                 .background = { 0, 0, 0, 1 },
                 .foreground = { 1, 1, 1, 1 },
                 .x = 0,
@@ -969,7 +977,11 @@ struct GameLogic final : eng::GameLogicInterface
                     "XXXXXXXXXXX"sv,
                 },
                 .entitiesNeeded = 1,
-                .levelText = { "reach the door to complete level" },
+                .levelText = {
+                    "YOU ARE THE LEADER OF THE PEACEFUL GUBGUBS",
+                    "BUT A HORRIBLE MIND VIRUS HAS INFECTED YOUR FELLOWS...",
+                    "REACH THE DOOR TO COMPLETE LEVEL",
+                },
             },
             Map {
                 .rows = {
@@ -984,8 +996,27 @@ struct GameLogic final : eng::GameLogicInterface
                 },
                 .entitiesNeeded = 2,
                 .levelText = {
-                    "collide with enemies to stun them",
-                    "befriend stunned enemy by walking over",
+                    "INFECTED GUBGUBS ARE BRUTISH AND AGGRESSIVE",
+                    "THEY CAN'T BE REASONED WITH, BUT CAN BE STUNNED BY A HEAD ON COLLISION",
+                    "BEFRIEND STUNNED GUBGUBS BY WALKING OVER THEM",
+                },
+            },
+            Map {
+                .rows = {
+                    "XXXXXDXXXXX"sv,
+                    "X_________X"sv,
+                    "X_TT___TT_X"sv,
+                    "X_E_____E_X"sv,
+                    "X____P____X"sv,
+                    "X_TT___TT_X"sv,
+                    "X_________X"sv,
+                    "XXXXXXXXXXX"sv,
+                },
+                .entitiesNeeded = 3,
+                .levelText = {
+                    "IF AN INFECTED SPOTS YOU OR YOUR FOLLOWERS IT WILL SHOOT ITS STUN BEAM",
+                    "ANY FOLLOWING GUBGUB IN THE TRAIN WILL BE STUNNED,",
+                    "BUT THE LEADER IS NOT AFFECTED",
                 },
             },
             Map {
@@ -1257,6 +1288,13 @@ struct GameLogic final : eng::GameLogicInterface
 
         if (tickTimer >= tickInterval)
         {
+            prevMapViewCenter = mapViewCenter;
+            if (!playerEntities.empty())
+            {
+                const auto& coords = component<MapCoords>().get(playerEntities.front());
+                mapViewCenter = glm::vec2(coords.x + 0.5, maxTilesVertical - coords.y - 0.5);
+            }
+
             gameTick();
             tickTimer -= tickInterval;
             tweenFrame = 0;
@@ -1280,6 +1318,8 @@ struct GameLogic final : eng::GameLogicInterface
         }
         tweenFrameTimer += deltaTime;
 
+        glm::vec2 mapViewCenterOffset = glm::mix(prevMapViewCenter, mapViewCenter, tween) - glm::vec2(0.5f * maxTilesHorizontal, 0.5f * maxTilesVertical);
+
         scene.instances().clear();
         for (uint32_t i = 0; i < cells.size(); ++i)
         {
@@ -1288,7 +1328,7 @@ struct GameLogic final : eng::GameLogicInterface
                 if (cells[i][j].solid)
                 {
                     scene.instances().push_back(eng::Instance {
-                                .position = glm::vec2(j + 0.5, maxTilesVertical - i - 0.5),
+                                .position = glm::vec2(j + 0.5, maxTilesVertical - i - 0.5) - mapViewCenterOffset,
                                 .textureIndex = textures.blank,
                             });
                 }
@@ -1302,6 +1342,10 @@ struct GameLogic final : eng::GameLogicInterface
                     && (sprite.prevx != sprite.x || sprite.prevy != sprite.y))
             {
                 position = glm::mix(glm::vec2(sprite.prevx + 0.5, maxTilesVertical - sprite.prevy - 0.5), position, tween);
+            }
+            if (component<MapCoords>().has(id))
+            {
+                position -= mapViewCenterOffset;
             }
             scene.instances().push_back(eng::Instance {
                         .position = position,
@@ -1358,7 +1402,7 @@ struct GameLogic final : eng::GameLogicInterface
                         if (component<Friendly>().has(*it) || component<Neutral>().has(*it))
                         {
                             scene.instances().push_back(eng::Instance {
-                                        .position = glm::vec2(cell.x + 0.5, maxTilesVertical - cell.y - 0.5),
+                                        .position = glm::vec2(cell.x + 0.5, maxTilesVertical - cell.y - 0.5) - mapViewCenterOffset,
                                         .angle = angle,
                                         .textureIndex = endTextureIndex,
                                         .tintColor = tintColor,
@@ -1367,7 +1411,7 @@ struct GameLogic final : eng::GameLogicInterface
                         return true;
                     }
                     scene.instances().push_back(eng::Instance {
-                                .position = glm::vec2(cell.x + 0.5, maxTilesVertical - cell.y - 0.5),
+                                .position = glm::vec2(cell.x + 0.5, maxTilesVertical - cell.y - 0.5) - mapViewCenterOffset,
                                 .angle = angle,
                                 .textureIndex = textureIndex,
                                 .tintColor = tintColor,
@@ -1380,8 +1424,8 @@ struct GameLogic final : eng::GameLogicInterface
         {
             constexpr glm::vec2 texCoordScale = { 1.0f / 16.0f, 1.0f / 8.0f };
             scene.instances().push_back(eng::Instance {
-                    .position = { text.x + 0.25f * text.text.size(), maxTilesVertical - text.y - 0.5 },
-                    .scale = { text.scale.x * 0.5f * text.text.size(), text.scale.y },
+                    .position = { text.x + 0.25f * text.text.size() * text.scale.x, maxTilesVertical - text.y - 0.5 },
+                    .scale = { 0.5f * text.text.size() * text.scale.x, text.scale.y },
                     .textureIndex = textures.blank,
                     .tintColor = text.background,
                 });
@@ -1389,8 +1433,8 @@ struct GameLogic final : eng::GameLogicInterface
             {
                 glm::vec2 minTexCoord = glm::vec2(text.text[i] / 8, text.text[i] % 8) * texCoordScale;
                 scene.instances().push_back(eng::Instance {
-                        .position = { text.x + i * 0.5 + 0.25, maxTilesVertical - text.y - 0.5 },
-                        .scale = { 0.5, 1.0 },
+                        .position = { text.x + (i + 0.5) * 0.5 * text.scale.x, maxTilesVertical - text.y - 0.5 },
+                        .scale = { text.scale.x * 0.5, text.scale.y },
                         .minTexCoord = minTexCoord,
                         .texCoordScale = texCoordScale,
                         .textureIndex = textures.font,
