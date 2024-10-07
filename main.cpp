@@ -195,6 +195,8 @@ struct Door
     bool open;
 };
 
+struct Transient {};
+
 static constexpr std::pair<int, int> directionCoords(Direction direction)
 {
     switch (direction)
@@ -270,6 +272,7 @@ struct GameLogic final : eng::GameLogicInterface
         std::vector<uint32_t> sightlineEnd;
         std::vector<uint32_t> zap;
         std::vector<uint32_t> zapHit;
+        std::vector<uint32_t> bonk;
         std::vector<uint32_t> enemySleepy;
         std::vector<uint32_t> friendlySleepy;
         std::vector<uint32_t> transform;
@@ -971,6 +974,14 @@ struct GameLogic final : eng::GameLogicInterface
             resourceLoader.loadTexture("textures/ZapHit5.png"),
             resourceLoader.loadTexture("textures/ZapHit6.png"),
         };
+        textures.bonk = {
+            resourceLoader.loadTexture("textures/Bonk1.png"),
+            resourceLoader.loadTexture("textures/Bonk2.png"),
+            resourceLoader.loadTexture("textures/Bonk3.png"),
+            resourceLoader.loadTexture("textures/Bonk4.png"),
+            resourceLoader.loadTexture("textures/Bonk5.png"),
+            resourceLoader.loadTexture("textures/Bonk6.png"),
+        };
         textures.enemySleepy = {
             resourceLoader.loadTexture("textures/NNSleepy1.png"),
             resourceLoader.loadTexture("textures/NNSleepy2.png"),
@@ -1107,6 +1118,11 @@ struct GameLogic final : eng::GameLogicInterface
 
     void gameTick()
     {
+        while (!component<Transient>().entities.empty())
+        {
+            destroyEntity(component<Transient>().entities.front());
+        }
+
         component<Sprite>().forEach([&](Sprite& sprite, uint32_t id)
         {
             sprite.prevx = sprite.x;
@@ -1177,6 +1193,13 @@ struct GameLogic final : eng::GameLogicInterface
                             component<Neutral>().add(target).wasFriendly = false;
                             component<CharacterAnimator>().remove(target);
                             component<SequenceAnimator>().get(target).sequence = &textures.enemySleepy;
+
+                            uint32_t bonker = createEntity();
+                            component<MapCoords>().add(bonker);
+                            component<Sprite>().add(bonker);
+                            component<SequenceAnimator>().add(bonker).sequence = &textures.bonk;
+                            component<Transient>().add(bonker);
+                            moveEntity(bonker, coords.x + dx, coords.y + dy);
                         }
                         else
                         {
@@ -1313,32 +1336,9 @@ struct GameLogic final : eng::GameLogicInterface
                 ++enemy.lineFrame;
             });
 
-            component<CharacterAnimator>().forEach([&](CharacterAnimator& animator, uint32_t id)
-            {
-                if (animator.textureSet)
-                {
-                    auto& sequenceAnimator = component<SequenceAnimator>().get(id);
-                    sequenceAnimator.sequence = &(animator.direction == Direction::Up ? animator.textureSet->back
-                        : animator.direction == Direction::Down ? animator.textureSet->front : animator.textureSet->side);
-
-                    auto& sprite = component<Sprite>().get(id);
-                    sprite.flipHorizontal = animator.direction == Direction::Right;
-                }
-            });
-
             component<SequenceAnimator>().forEach([&](SequenceAnimator& animator, uint32_t id)
             {
-                if (animator.sequence)
-                {
-                    ++animator.frame;
-                    if (animator.frame >= animator.sequence->size())
-                    {
-                        animator.frame = 0;
-                    }
-
-                    auto& sprite = component<Sprite>().get(id);
-                    sprite.textureIndex = animator.sequence->at(animator.frame);
-                }
+                ++animator.frame;
             });
 
             animationFrameTimer -= animationFrameInterval;
@@ -1393,6 +1393,33 @@ struct GameLogic final : eng::GameLogicInterface
                 }
             }
         }
+
+        component<CharacterAnimator>().forEach([&](CharacterAnimator& animator, uint32_t id)
+        {
+            if (animator.textureSet)
+            {
+                auto& sequenceAnimator = component<SequenceAnimator>().get(id);
+                sequenceAnimator.sequence = &(animator.direction == Direction::Up ? animator.textureSet->back
+                    : animator.direction == Direction::Down ? animator.textureSet->front : animator.textureSet->side);
+
+                auto& sprite = component<Sprite>().get(id);
+                sprite.flipHorizontal = animator.direction == Direction::Right;
+            }
+        });
+
+        component<SequenceAnimator>().forEach([&](SequenceAnimator& animator, uint32_t id)
+        {
+            if (animator.sequence)
+            {
+                if (animator.frame >= animator.sequence->size())
+                {
+                    animator.frame = 0;
+                }
+
+                auto& sprite = component<Sprite>().get(id);
+                sprite.textureIndex = animator.sequence->at(animator.frame);
+            }
+        });
 
         component<Sprite>().forEach([&](const Sprite& sprite, uint32_t id)
         {
