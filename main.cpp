@@ -163,6 +163,7 @@ struct Friendly {};
 
 struct Neutral
 {
+    bool wasFriendly;
     uint32_t cooldown = 3;
 };
 
@@ -265,7 +266,8 @@ struct GameLogic final : eng::GameLogicInterface
         CharacterTextureSet enemy;
         CharacterTextureSet friendly;
         CharacterTextureSet leader;
-        std::vector<uint32_t> dotline;
+        std::vector<uint32_t> sightline;
+        std::vector<uint32_t> sightlineEnd;
         std::vector<uint32_t> zap;
         std::vector<uint32_t> zapHit;
         std::vector<uint32_t> enemySleepy;
@@ -521,7 +523,7 @@ struct GameLogic final : eng::GameLogicInterface
                         for (auto tmp = it; tmp != playerEntities.end(); ++tmp)
                         {
                             component<Friendly>().remove(*tmp);
-                            component<Neutral>().add(*tmp);
+                            component<Neutral>().add(*tmp).wasFriendly = true;
                             component<CharacterAnimator>().remove(*tmp);
                             component<SequenceAnimator>().get(*tmp).sequence = &textures.friendlySleepy;
                         }
@@ -937,11 +939,21 @@ struct GameLogic final : eng::GameLogicInterface
     void init(eng::ResourceLoaderInterface& resourceLoader, eng::SceneInterface& scene, eng::InputInterface& input) override
     {
         textures.blank = resourceLoader.loadTexture("textures/blank.png");
-        textures.dotline = {
-            resourceLoader.loadTexture("textures/Dotline1.png"),
-            resourceLoader.loadTexture("textures/Dotline2.png"),
-            resourceLoader.loadTexture("textures/Dotline3.png"),
-            resourceLoader.loadTexture("textures/Dotline4.png"),
+        textures.sightline = {
+            resourceLoader.loadTexture("textures/LOS1.png"),
+            resourceLoader.loadTexture("textures/LOS2.png"),
+            resourceLoader.loadTexture("textures/LOS3.png"),
+            resourceLoader.loadTexture("textures/LOS4.png"),
+            resourceLoader.loadTexture("textures/LOS5.png"),
+            resourceLoader.loadTexture("textures/LOS6.png"),
+        };
+        textures.sightlineEnd = {
+            resourceLoader.loadTexture("textures/LOSHalf1.png"),
+            resourceLoader.loadTexture("textures/LOSHalf2.png"),
+            resourceLoader.loadTexture("textures/LOSHalf3.png"),
+            resourceLoader.loadTexture("textures/LOSHalf4.png"),
+            resourceLoader.loadTexture("textures/LOSHalf5.png"),
+            resourceLoader.loadTexture("textures/LOSHalf6.png"),
         };
         textures.zap = {
             resourceLoader.loadTexture("textures/Zap1.png"),
@@ -1162,7 +1174,7 @@ struct GameLogic final : eng::GameLogicInterface
                         if (attack)
                         {
                             component<Enemy>().remove(target);
-                            component<Neutral>().add(target);
+                            component<Neutral>().add(target).wasFriendly = false;
                             component<CharacterAnimator>().remove(target);
                             component<SequenceAnimator>().get(target).sequence = &textures.enemySleepy;
                         }
@@ -1245,7 +1257,7 @@ struct GameLogic final : eng::GameLogicInterface
             else
             {
                 --neutral.cooldown;
-                if (neutral.cooldown == 0)
+                if (neutral.cooldown == 0 && neutral.wasFriendly)
                 {
                     component<SequenceAnimator>().get(id).sequence = &textures.transform;
                 }
@@ -1422,12 +1434,12 @@ struct GameLogic final : eng::GameLogicInterface
             }
             else
             {
-                if (enemy.lineFrame >= textures.dotline.size())
+                if (enemy.lineFrame >= textures.sightline.size())
                 {
                     enemy.lineFrame = 0;
                 }
-                textureIndex = textures.dotline[enemy.lineFrame];
-                endTextureIndex = textures.dotline[enemy.lineFrame];
+                textureIndex = textures.sightline[enemy.lineFrame];
+                endTextureIndex = textures.sightlineEnd[enemy.lineFrame];
                 if (enemy.state == Enemy::State::Alert)
                 {
                     tintColor = { 1, 1, 0, 1 };
