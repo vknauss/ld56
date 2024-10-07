@@ -134,6 +134,11 @@ struct CharacterAnimator
 {
     const CharacterTextureSet* textureSet = nullptr;
     Direction direction = Direction::Down;
+};
+
+struct SequenceAnimator
+{
+    const std::vector<uint32_t>* sequence = nullptr;
     uint32_t frame = 0;
 };
 
@@ -240,7 +245,6 @@ static constexpr float directionAngle(Direction direction)
     }
 }
 
-
 struct Map
 {
     std::vector<std::string_view> rows;
@@ -264,6 +268,9 @@ struct GameLogic final : eng::GameLogicInterface
         std::vector<uint32_t> dotline;
         std::vector<uint32_t> zap;
         std::vector<uint32_t> zapHit;
+        std::vector<uint32_t> enemySleepy;
+        std::vector<uint32_t> friendlySleepy;
+        std::vector<uint32_t> transform;
         uint32_t arrow;
         uint32_t font;
     } textures;
@@ -369,6 +376,7 @@ struct GameLogic final : eng::GameLogicInterface
             component<CharacterAnimator>().add(entity) = {
                 .textureSet = &textures.leader,
             };
+            component<SequenceAnimator>().add(entity);
             moveEntity(entity, x, y);
             ++it;
         }
@@ -384,6 +392,7 @@ struct GameLogic final : eng::GameLogicInterface
             component<CharacterAnimator>().add(entity) = {
                 .textureSet = &textures.friendly,
             };
+            component<SequenceAnimator>().add(entity);
             moveEntity(entity, x, y);
         }
     }
@@ -398,6 +407,7 @@ struct GameLogic final : eng::GameLogicInterface
         component<CharacterAnimator>().add(entity) = {
             .textureSet = &textures.enemy,
         };
+        component<SequenceAnimator>().add(entity);
         moveEntity(entity, x, y);
     }
 
@@ -512,7 +522,8 @@ struct GameLogic final : eng::GameLogicInterface
                         {
                             component<Friendly>().remove(*tmp);
                             component<Neutral>().add(*tmp);
-                            component<Sprite>().get(*tmp).color = { 1, 0, 1, 1 };
+                            component<CharacterAnimator>().remove(*tmp);
+                            component<SequenceAnimator>().get(*tmp).sequence = &textures.friendlySleepy;
                         }
                         playerEntities.erase(it, playerEntities.end());
                     }
@@ -948,6 +959,30 @@ struct GameLogic final : eng::GameLogicInterface
             resourceLoader.loadTexture("textures/ZapHit5.png"),
             resourceLoader.loadTexture("textures/ZapHit6.png"),
         };
+        textures.enemySleepy = {
+            resourceLoader.loadTexture("textures/NNSleepy1.png"),
+            resourceLoader.loadTexture("textures/NNSleepy2.png"),
+            resourceLoader.loadTexture("textures/NNSleepy3.png"),
+            resourceLoader.loadTexture("textures/NNSleepy4.png"),
+            resourceLoader.loadTexture("textures/NNSleepy5.png"),
+            resourceLoader.loadTexture("textures/NNSleepy6.png"),
+        };
+        textures.friendlySleepy = {
+            resourceLoader.loadTexture("textures/GGSleepy1.png"),
+            resourceLoader.loadTexture("textures/GGSleepy2.png"),
+            resourceLoader.loadTexture("textures/GGSleepy3.png"),
+            resourceLoader.loadTexture("textures/GGSleepy4.png"),
+            resourceLoader.loadTexture("textures/GGSleepy5.png"),
+            resourceLoader.loadTexture("textures/GGSleepy6.png"),
+        };
+        textures.transform = {
+            resourceLoader.loadTexture("textures/Transform1.png"),
+            resourceLoader.loadTexture("textures/Transform2.png"),
+            resourceLoader.loadTexture("textures/Transform3.png"),
+            resourceLoader.loadTexture("textures/Transform4.png"),
+            resourceLoader.loadTexture("textures/Transform5.png"),
+            resourceLoader.loadTexture("textures/Transform6.png"),
+        };
         textures.arrow = resourceLoader.loadTexture("textures/arrow.png");
         textures.font = resourceLoader.loadTexture("textures/font.png");
         loadEnemyTextures(resourceLoader);
@@ -1128,9 +1163,8 @@ struct GameLogic final : eng::GameLogicInterface
                         {
                             component<Enemy>().remove(target);
                             component<Neutral>().add(target);
-                            // TEMP: neutral are purple guys
-                            component<Sprite>().get(target).color = { 1, 0, 1, 1 };
-                            component<CharacterAnimator>().get(target).textureSet = &textures.friendly;
+                            component<CharacterAnimator>().remove(target);
+                            component<SequenceAnimator>().get(target).sequence = &textures.enemySleepy;
                         }
                         else
                         {
@@ -1138,9 +1172,9 @@ struct GameLogic final : eng::GameLogicInterface
                             {
                                 component<Neutral>().remove(target);
                                 component<Friendly>().add(target);
-                                // TEMP: neutral are purple guys
-                                component<Sprite>().get(target).color = { 1, 1, 1, 1 };
-                                component<CharacterAnimator>().get(target).textureSet = &textures.friendly;
+                                component<CharacterAnimator>().add(target) = {
+                                    .textureSet = &textures.friendly,
+                                };
                                 playerEntities.push_back(target);
                             }
 
@@ -1203,14 +1237,18 @@ struct GameLogic final : eng::GameLogicInterface
             if (neutral.cooldown == 0)
             {
                 component<Enemy>().add(id);
-                // TEMP: neutral are purple guys
-                component<Sprite>().get(id).color = { 1, 1, 1, 1 };
-                component<CharacterAnimator>().get(id).textureSet = &textures.enemy;
+                component<CharacterAnimator>().add(id) = {
+                    .textureSet = &textures.enemy,
+                };
                 component<Neutral>().removeLater(id);
             }
             else
             {
                 --neutral.cooldown;
+                if (neutral.cooldown == 0)
+                {
+                    component<SequenceAnimator>().get(id).sequence = &textures.transform;
+                }
             }
         });
 
@@ -1267,18 +1305,27 @@ struct GameLogic final : eng::GameLogicInterface
             {
                 if (animator.textureSet)
                 {
-                    const auto& sequence = animator.direction == Direction::Up ? animator.textureSet->back
-                        : animator.direction == Direction::Down ? animator.textureSet->front : animator.textureSet->side;
+                    auto& sequenceAnimator = component<SequenceAnimator>().get(id);
+                    sequenceAnimator.sequence = &(animator.direction == Direction::Up ? animator.textureSet->back
+                        : animator.direction == Direction::Down ? animator.textureSet->front : animator.textureSet->side);
 
+                    auto& sprite = component<Sprite>().get(id);
+                    sprite.flipHorizontal = animator.direction == Direction::Right;
+                }
+            });
+
+            component<SequenceAnimator>().forEach([&](SequenceAnimator& animator, uint32_t id)
+            {
+                if (animator.sequence)
+                {
                     ++animator.frame;
-                    if (animator.frame >= sequence.size())
+                    if (animator.frame >= animator.sequence->size())
                     {
                         animator.frame = 0;
                     }
 
                     auto& sprite = component<Sprite>().get(id);
-                    sprite.textureIndex = sequence[animator.frame];
-                    sprite.flipHorizontal = animator.direction == Direction::Right;
+                    sprite.textureIndex = animator.sequence->at(animator.frame);
                 }
             });
 
