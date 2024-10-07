@@ -11,6 +11,6 @@ layout(set = 0, binding = 0) uniform sampler2D texSamplers[];
 
 void main()
 {
-    fragColor = vec4((textureIndex + 1) & 1, ((textureIndex + 1) >> 1) & 1, ((textureIndex + 1) >> 2) & 1, 1);
-    fragColor = tintColor * texture(texSamplers[nonuniformEXT(textureIndex)], texCoord);
+    vec4 texColor = texture(texSamplers[nonuniformEXT(textureIndex)], texCoord);
+    fragColor = vec4(pow(tintColor.rgb, vec3(2.2)) * texColor.rgb, tintColor.a * texColor.a);
 }

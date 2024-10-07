@@ -9,7 +9,6 @@
 #include <memory>
 #include <string_view>
 #include <typeinfo>
-#include <iostream>
 
 enum class Direction
 {
@@ -187,7 +186,7 @@ struct Text
     glm::vec2 scale = { 1.0, 1.0 };
     glm::vec4 background = { 0, 0, 0, 0 };
     glm::vec4 foreground = { 1, 1, 1, 1 };
-    uint32_t x, y;
+    glm::vec2 position;
 };
 
 struct Door
@@ -278,6 +277,8 @@ struct GameLogic final : eng::GameLogicInterface
         std::vector<uint32_t> transform;
         uint32_t arrow;
         uint32_t font;
+        uint32_t wall;
+        uint32_t floor;
     } textures;
 
     std::map<Direction, uint32_t> directionInputMappings;
@@ -907,10 +908,10 @@ struct GameLogic final : eng::GameLogicInterface
         gubgubCounterText = createEntity();
         component<Text>().add(gubgubCounterText) = Text{
             .text = "GubGubs",
-            .background = { 0, 0, 0, 1 },
-            .foreground = { 0.8, 0.2, 0.0, 1 },
-            .x = 0,
-            .y = 0,
+            .scale = { 0.75, 0.75 },
+            .background = { 48.0/255.0, 56.0/255.0, 67.0/255.0, 0.8 },
+            .foreground = { 164.0/255.0, 197.0/255.0, 175.0/255.0, 1 },
+            .position = { 0.5, 0.5 },
         };
 
         for (uint32_t i = 0; i < map.levelText.size(); ++i)
@@ -918,10 +919,9 @@ struct GameLogic final : eng::GameLogicInterface
             component<Text>().add(createEntity()) = {
                 .text = map.levelText[i],
                 .scale = { 0.5, 0.5 },
-                .background = { 0, 0, 0, 1 },
-                .foreground = { 1, 1, 1, 1 },
-                .x = 0,
-                .y = static_cast<uint32_t>(maxTilesVertical - map.levelText.size() + i),
+                .background = { 48.0/255.0, 56.0/255.0, 67.0/255.0, 0.8 },
+                .foreground = { 164.0/255.0, 197.0/255.0, 175.0/255.0, 1 },
+                .position = { 1, static_cast<float>(maxTilesVertical - (map.levelText.size() - i + 1) * 0.5f) },
             };
         }
 
@@ -1008,6 +1008,8 @@ struct GameLogic final : eng::GameLogicInterface
         };
         textures.arrow = resourceLoader.loadTexture("textures/arrow.png");
         textures.font = resourceLoader.loadTexture("textures/font.png");
+        textures.wall = resourceLoader.loadTexture("textures/WallObstacle.png");
+        textures.floor = resourceLoader.loadTexture("textures/FloorTile.png");
         loadEnemyTextures(resourceLoader);
         loadFriendlyTextures(resourceLoader);
         loadLeaderTextures(resourceLoader);
@@ -1227,7 +1229,6 @@ struct GameLogic final : eng::GameLogicInterface
                             {
                                 if (component<Door>().get(*it).open)
                                 {
-                                    std::cout << "win condition" << std::endl;
                                     if (currentLevel + 1 < maps.size())
                                     {
                                         loadLevel(currentLevel + 1);
@@ -1380,6 +1381,12 @@ struct GameLogic final : eng::GameLogicInterface
         glm::vec2 mapViewCenterOffset = glm::mix(prevMapViewCenter, mapViewCenter, tween) - glm::vec2(0.5f * maxTilesHorizontal, 0.5f * maxTilesVertical);
 
         scene.instances().clear();
+        scene.instances().push_back(eng::Instance {
+                    .position = glm::vec2(0.5 * cells.front().size(), maxTilesVertical - 0.5 * cells.size()) - mapViewCenterOffset,
+                    .scale = glm::vec2(cells.front().size(), cells.size()),
+                    .texCoordScale = glm::vec2(cells.front().size(), cells.size()),
+                    .textureIndex = textures.floor,
+                });
         for (uint32_t i = 0; i < cells.size(); ++i)
         {
             for (uint32_t j = 0; j < cells[i].size(); ++j)
@@ -1388,7 +1395,7 @@ struct GameLogic final : eng::GameLogicInterface
                 {
                     scene.instances().push_back(eng::Instance {
                                 .position = glm::vec2(j + 0.5, maxTilesVertical - i - 0.5) - mapViewCenterOffset,
-                                .textureIndex = textures.blank,
+                                .textureIndex = textures.wall,
                             });
                 }
             }
@@ -1510,7 +1517,7 @@ struct GameLogic final : eng::GameLogicInterface
         {
             constexpr glm::vec2 texCoordScale = { 1.0f / 16.0f, 1.0f / 8.0f };
             scene.instances().push_back(eng::Instance {
-                    .position = { text.x + 0.25f * text.text.size() * text.scale.x, maxTilesVertical - text.y - 0.5 },
+                    .position = { text.position.x + 0.25f * text.text.size() * text.scale.x, maxTilesVertical - text.position.y - 0.5 * text.scale.y },
                     .scale = { 0.5f * text.text.size() * text.scale.x, text.scale.y },
                     .textureIndex = textures.blank,
                     .tintColor = text.background,
@@ -1519,7 +1526,7 @@ struct GameLogic final : eng::GameLogicInterface
             {
                 glm::vec2 minTexCoord = glm::vec2(text.text[i] / 8, text.text[i] % 8) * texCoordScale;
                 scene.instances().push_back(eng::Instance {
-                        .position = { text.x + (i + 0.5) * 0.5 * text.scale.x, maxTilesVertical - text.y - 0.5 },
+                        .position = { text.position.x + (i + 0.5) * 0.5 * text.scale.x, maxTilesVertical - text.position.y - 0.5 * text.scale.y },
                         .scale = { text.scale.x * 0.5, text.scale.y },
                         .minTexCoord = minTexCoord,
                         .texCoordScale = texCoordScale,
