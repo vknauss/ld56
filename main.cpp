@@ -105,6 +105,7 @@ struct Sprite
 {
     uint32_t textureIndex;
     glm::vec4 color { 1, 1, 1, 1 };
+    bool flipHorizontal = false;
     Direction direction = Direction::Down;
 };
 
@@ -118,6 +119,20 @@ struct Cell
 struct Map
 {
     std::vector<std::vector<Cell>> cells;
+};
+
+struct CharacterTextureSet
+{
+    std::vector<uint32_t> front;
+    std::vector<uint32_t> back;
+    std::vector<uint32_t> side;
+};
+
+struct CharacterAnimator
+{
+    const CharacterTextureSet* textureSet = nullptr;
+    Direction direction = Direction::Down;
+    uint32_t frame = 0;
 };
 
 struct Enemy
@@ -134,7 +149,6 @@ struct Enemy
     Direction facingDirection = Direction::Down;
     State state = State::Patrolling;
     State prevState = State::Patrolling;
-    uint32_t frame = 0;
     uint32_t lineFrame = 0;
 };
 
@@ -170,6 +184,11 @@ struct Text
     glm::vec2 scale = { 1.0, 1.0 };
     glm::vec4 background = { 0, 0, 0, 0 };
     glm::vec4 foreground = { 1, 1, 1, 1 };
+};
+
+struct Door
+{
+    bool open;
 };
 
 static constexpr std::pair<int, int> directionCoords(Direction direction)
@@ -228,31 +247,13 @@ struct GameLogic final : eng::GameLogicInterface
     struct
     {
         uint32_t blank;
-        std::map<Direction, uint32_t> friendly;
-        struct
-        {
-            uint32_t backDown;
-            uint32_t backUp;
-            uint32_t frontDown;
-            uint32_t frontUp;
-            uint32_t frontUpBlink;
-            uint32_t leftDown;
-            uint32_t leftUp;
-            uint32_t leftUpBlink;
-            uint32_t rightDown;
-            uint32_t rightUp;
-            uint32_t rightUpBlink;
-        } enemy;
+        CharacterTextureSet enemy;
+        CharacterTextureSet friendly;
         std::vector<uint32_t> dotline;
         std::vector<uint32_t> zap;
         uint32_t arrow;
         uint32_t font;
     } textures;
-
-    struct
-    {
-        std::map<Direction, std::vector<uint32_t>> enemy;
-    } sequences;
 
     std::map<Direction, uint32_t> directionInputMappings;
 
@@ -262,6 +263,8 @@ struct GameLogic final : eng::GameLogicInterface
     std::vector<Entity> entities;
     std::deque<uint32_t> freeEntities;
     std::vector<uint32_t> playerEntities;
+
+    uint32_t entitiesNeeded;
 
     static constexpr int animationFramesPerTick = 6;
     static constexpr int tweenFramesPerTick = 12;
@@ -356,6 +359,9 @@ struct GameLogic final : eng::GameLogicInterface
             component<Leader>().add(entity);
             component<Sprite>().add(entity) = { .color = glm::vec4(1, 1, 0, 1) };
             component<Solid>().add(entity);
+            component<CharacterAnimator>().add(entity) = {
+                .textureSet = &textures.friendly,
+            };
             ++it;
         }
         for (; it != positions.end(); ++it)
@@ -366,6 +372,9 @@ struct GameLogic final : eng::GameLogicInterface
             component<Friendly>().add(entity);
             component<Sprite>().add(entity);
             component<Solid>().add(entity);
+            component<CharacterAnimator>().add(entity) = {
+                .textureSet = &textures.friendly,
+            };
         }
     }
 
@@ -375,6 +384,9 @@ struct GameLogic final : eng::GameLogicInterface
         component<Enemy>().add(entity) = { .facingDirection = facingDirection };
         component<Sprite>().add(entity);
         component<Solid>().add(entity);
+        component<CharacterAnimator>().add(entity) = {
+            .textureSet = &textures.enemy,
+        };
     }
 
     void clampDeltaToMap(uint32_t x, uint32_t y, int& dx, int& dy)
@@ -601,30 +613,126 @@ struct GameLogic final : eng::GameLogicInterface
         {
             enemy.lineFrame = 0;
         }
+        component<CharacterAnimator>().get(id).direction = enemy.facingDirection;
+    }
+
+    void loadEnemyTextures(eng::ResourceLoaderInterface& resourceLoader)
+    {
+        uint32_t backDown1 = resourceLoader.loadTexture("textures/NNBackDown1.png");
+        uint32_t backDown2 = resourceLoader.loadTexture("textures/NNBackDown2.png");
+        uint32_t backUp1 = resourceLoader.loadTexture("textures/NNBackUp1.png");
+        uint32_t backUp2 = resourceLoader.loadTexture("textures/NNBackUp2.png");
+        uint32_t frontDown1 = resourceLoader.loadTexture("textures/NNFrontDown1.png");
+        uint32_t frontDown2 = resourceLoader.loadTexture("textures/NNFrontDown2.png");
+        uint32_t frontUp1 = resourceLoader.loadTexture("textures/NNFrontUp1.png");
+        uint32_t frontUp2 = resourceLoader.loadTexture("textures/NNFrontUp2.png");
+        uint32_t frontUp2Blink = resourceLoader.loadTexture("textures/NNFrontUp2Blink.png");
+        uint32_t sideDown1 = resourceLoader.loadTexture("textures/NNSideDown1.png");
+        uint32_t sideDown2 = resourceLoader.loadTexture("textures/NNSideDown2.png");
+        uint32_t sideUp1 = resourceLoader.loadTexture("textures/NNSideUp1.png");
+        uint32_t sideUp2 = resourceLoader.loadTexture("textures/NNSideUp2.png");
+        uint32_t sideUp2Blink = resourceLoader.loadTexture("textures/NNSideUp2Blink.png");
+
+        textures.enemy = {
+            .front = {
+                frontDown1,
+                frontDown2,
+                frontDown2,
+                frontUp1,
+                frontUp2,
+                frontUp2,
+                frontDown1,
+                frontDown2,
+                frontDown2,
+                frontUp1,
+                frontUp2Blink,
+                frontUp2,
+            },
+            .back = {
+                backDown1,
+                backDown2,
+                backDown2,
+                backUp1,
+                backUp2,
+                backUp2,
+            },
+            .side = {
+                sideDown1,
+                sideDown2,
+                sideDown2,
+                sideUp1,
+                sideUp2,
+                sideUp2,
+                sideDown1,
+                sideDown2,
+                sideDown2,
+                sideUp1,
+                sideUp2Blink,
+                sideUp2,
+            },
+        };
+    }
+
+    void loadFriendlyTextures(eng::ResourceLoaderInterface& resourceLoader)
+    {
+        uint32_t backDown1 = resourceLoader.loadTexture("textures/GGBackDown1.png");
+        uint32_t backDown2 = resourceLoader.loadTexture("textures/GGBackDown2.png");
+        uint32_t backUp1 = resourceLoader.loadTexture("textures/GGBackUp1.png");
+        uint32_t backUp2 = resourceLoader.loadTexture("textures/GGBackUp2.png");
+        uint32_t frontDown1 = resourceLoader.loadTexture("textures/GGFrontDown1.png");
+        uint32_t frontDown2 = resourceLoader.loadTexture("textures/GGFrontDown2.png");
+        uint32_t frontUp1 = resourceLoader.loadTexture("textures/GGFrontUp1.png");
+        uint32_t frontUp2 = resourceLoader.loadTexture("textures/GGFrontUp2.png");
+        uint32_t frontUp2Blink = resourceLoader.loadTexture("textures/GGFrontUp2Blink.png");
+        uint32_t sideDown1 = resourceLoader.loadTexture("textures/GGSideDown1.png");
+        uint32_t sideDown2 = resourceLoader.loadTexture("textures/GGSideDown2.png");
+        uint32_t sideUp1 = resourceLoader.loadTexture("textures/GGSideUp1.png");
+        uint32_t sideUp2 = resourceLoader.loadTexture("textures/GGSideUp2.png");
+        uint32_t sideUp2Blink = resourceLoader.loadTexture("textures/GGSideUp2Blink.png");
+
+        textures.friendly = {
+            .front = {
+                frontDown1,
+                frontDown2,
+                frontDown2,
+                frontUp1,
+                frontUp2,
+                frontUp2,
+                frontDown1,
+                frontDown2,
+                frontDown2,
+                frontUp1,
+                frontUp2Blink,
+                frontUp2,
+            },
+            .back = {
+                backDown1,
+                backDown2,
+                backDown2,
+                backUp1,
+                backUp2,
+                backUp2,
+            },
+            .side = {
+                sideDown1,
+                sideDown2,
+                sideDown2,
+                sideUp1,
+                sideUp2,
+                sideUp2,
+                sideDown1,
+                sideDown2,
+                sideDown2,
+                sideUp1,
+                sideUp2Blink,
+                sideUp2,
+            },
+        };
     }
 
     void init(eng::ResourceLoaderInterface& resourceLoader, eng::SceneInterface& scene, eng::InputInterface& input) override
     {
         textures.blank = resourceLoader.loadTexture("textures/blank.png");
-        textures.friendly = {
-            { Direction::Up, resourceLoader.loadTexture("textures/GubgubSpriteBack.png") },
-            { Direction::Left, resourceLoader.loadTexture("textures/GubgubSpriteSideLeft.png") },
-            { Direction::Down, resourceLoader.loadTexture("textures/GubgubSpriteFront.png") },
-            { Direction::Right, resourceLoader.loadTexture("textures/GubgubSpriteSideRight.png") },
-        };
-        textures.enemy = {
-            .backDown = resourceLoader.loadTexture("textures/NNBackDown.png"),
-            .backUp = resourceLoader.loadTexture("textures/NNBackUp.png"),
-            .frontDown = resourceLoader.loadTexture("textures/NNFrontDown.png"),
-            .frontUp = resourceLoader.loadTexture("textures/NNFrontUp.png"),
-            .frontUpBlink = resourceLoader.loadTexture("textures/NNFrontUpBlink.png"),
-            .leftDown = resourceLoader.loadTexture("textures/NNLeftDown.png"),
-            .leftUp = resourceLoader.loadTexture("textures/NNLeftUp.png"),
-            .leftUpBlink = resourceLoader.loadTexture("textures/NNLeftUpBlink.png"),
-            .rightDown = resourceLoader.loadTexture("textures/NNRightDown.png"),
-            .rightUp = resourceLoader.loadTexture("textures/NNRightUp.png"),
-            .rightUpBlink = resourceLoader.loadTexture("textures/NNRightUpBlink.png"),
-        };
         textures.dotline = {
             resourceLoader.loadTexture("textures/Dotline1.png"),
             resourceLoader.loadTexture("textures/Dotline2.png"),
@@ -641,59 +749,8 @@ struct GameLogic final : eng::GameLogicInterface
         };
         textures.arrow = resourceLoader.loadTexture("textures/arrow.png");
         textures.font = resourceLoader.loadTexture("textures/font.png");
-
-        sequences.enemy = {
-            { Direction::Up, {
-                    textures.enemy.backDown,
-                    textures.enemy.backDown,
-                    textures.enemy.backUp,
-                    textures.enemy.backUp,
-                    textures.enemy.backUp,
-                    textures.enemy.backDown,
-                } },
-            { Direction::Left, {
-                    textures.enemy.leftDown,
-                    textures.enemy.leftDown,
-                    textures.enemy.leftUp,
-                    textures.enemy.leftUp,
-                    textures.enemy.leftUp,
-                    textures.enemy.leftDown,
-                    textures.enemy.leftDown,
-                    textures.enemy.leftDown,
-                    textures.enemy.leftUp,
-                    textures.enemy.leftUpBlink,
-                    textures.enemy.leftUp,
-                    textures.enemy.leftDown,
-                } },
-            { Direction::Down, {
-                    textures.enemy.frontDown,
-                    textures.enemy.frontDown,
-                    textures.enemy.frontUp,
-                    textures.enemy.frontUp,
-                    textures.enemy.frontUp,
-                    textures.enemy.frontDown,
-                    textures.enemy.frontDown,
-                    textures.enemy.frontDown,
-                    textures.enemy.frontUp,
-                    textures.enemy.frontUpBlink,
-                    textures.enemy.frontUp,
-                    textures.enemy.frontDown,
-                } },
-            { Direction::Right, {
-                    textures.enemy.rightDown,
-                    textures.enemy.rightDown,
-                    textures.enemy.rightUp,
-                    textures.enemy.rightUp,
-                    textures.enemy.rightUp,
-                    textures.enemy.rightDown,
-                    textures.enemy.rightDown,
-                    textures.enemy.rightDown,
-                    textures.enemy.rightUp,
-                    textures.enemy.rightUpBlink,
-                    textures.enemy.rightUp,
-                    textures.enemy.rightDown,
-                } },
-        };
+        loadEnemyTextures(resourceLoader);
+        loadFriendlyTextures(resourceLoader);
 
         using namespace std::string_view_literals;
         constexpr std::array mapRows {
@@ -705,7 +762,7 @@ struct GameLogic final : eng::GameLogicInterface
             "X__T_T_________XE__X"sv,
             "X_____________T_T__X"sv,
             "X________P_________X"sv,
-            "X__________________X"sv,
+            "X__________________D"sv,
             "X__________________X"sv,
             "XT________________TX"sv,
             "XXXXXXXXXXXXXXXXXXXX"sv,
@@ -752,6 +809,20 @@ struct GameLogic final : eng::GameLogicInterface
             {
                 auto id = createEntity(x, y);
                 component<PatrolPoint>().add(id);
+            }
+        }
+
+        if (auto it = markers.find('D'); it != markers.end())
+        {
+            for (auto&& [x, y] : it->second)
+            {
+                auto id = createEntity(x, y);
+                component<Door>().add(id);
+                component<Solid>().add(id);
+                component<Sprite>().add(id) = {
+                    .textureIndex = textures.blank,
+                    .color = { 1, 0, 0, 1 },
+                };
             }
         }
 
@@ -840,9 +911,9 @@ struct GameLogic final : eng::GameLogicInterface
                         {
                             component<Enemy>().remove(target);
                             component<Neutral>().add(target);
-                            auto& sprite = component<Sprite>().get(target);
-                            sprite.textureIndex = textures.friendly[Direction::Down];
-                            sprite.color = { 1, 0, 1, 1 };
+                            // TEMP: neutral are purple guys
+                            component<Sprite>().get(target).color = { 1, 0, 1, 1 };
+                            component<CharacterAnimator>().get(target).textureSet = &textures.friendly;
                         }
                         else
                         {
@@ -850,8 +921,9 @@ struct GameLogic final : eng::GameLogicInterface
                             {
                                 component<Neutral>().remove(target);
                                 component<Friendly>().add(target);
-                                auto& sprite = component<Sprite>().get(target);
-                                sprite.color = { 1, 1, 1, 1 };
+                                // TEMP: neutral are purple guys
+                                component<Sprite>().get(target).color = { 1, 1, 1, 1 };
+                                component<CharacterAnimator>().get(target).textureSet = &textures.friendly;
                                 playerEntities.push_back(target);
                             }
 
@@ -871,13 +943,12 @@ struct GameLogic final : eng::GameLogicInterface
 
         if (!playerEntities.empty())
         {
-            component<Sprite>().get(playerEntities.front()).textureIndex = textures.friendly.at(component<Leader>().get(playerEntities.front()).facingDirection);
+            component<CharacterAnimator>().get(playerEntities.front()).direction = component<Leader>().get(playerEntities.front()).facingDirection;
             for (uint32_t i = 1; i < playerEntities.size(); ++i)
             {
                 auto& entity = entities[playerEntities[i]];
                 auto& nextEntity = entities[playerEntities[i - 1]];
-                auto direction = directionFromDelta((int)nextEntity.x - (int)entity.x, (int)nextEntity.y - (int)entity.y);
-                component<Sprite>().get(playerEntities[i]).textureIndex = textures.friendly.at(direction);
+                component<CharacterAnimator>().get(playerEntities[i]).direction = directionFromDelta((int)nextEntity.x - (int)entity.x, (int)nextEntity.y - (int)entity.y);
             }
         }
 
@@ -886,7 +957,9 @@ struct GameLogic final : eng::GameLogicInterface
             if (neutral.cooldown == 0)
             {
                 component<Enemy>().add(id);
+                // TEMP: neutral are purple guys
                 component<Sprite>().get(id).color = { 1, 1, 1, 1 };
+                component<CharacterAnimator>().get(id).textureSet = &textures.enemy;
                 component<Neutral>().removeLater(id);
             }
             else
@@ -929,16 +1002,26 @@ struct GameLogic final : eng::GameLogicInterface
         {
             component<Enemy>().forEach([&](Enemy& enemy, uint32_t id)
             {
-                ++enemy.frame;
                 ++enemy.lineFrame;
+            });
 
-                auto& sprite = component<Sprite>().get(id);
-                const auto& sequence = sequences.enemy.at(enemy.facingDirection);
-                if (enemy.frame >= sequence.size())
+            component<CharacterAnimator>().forEach([&](CharacterAnimator& animator, uint32_t id)
+            {
+                if (animator.textureSet)
                 {
-                    enemy.frame = 0;
+                    const auto& sequence = animator.direction == Direction::Up ? animator.textureSet->back
+                        : animator.direction == Direction::Down ? animator.textureSet->front : animator.textureSet->side;
+
+                    ++animator.frame;
+                    if (animator.frame >= sequence.size())
+                    {
+                        animator.frame = 0;
+                    }
+
+                    auto& sprite = component<Sprite>().get(id);
+                    sprite.textureIndex = sequence[animator.frame];
+                    sprite.flipHorizontal = animator.direction == Direction::Right;
                 }
-                sprite.textureIndex = sequence[enemy.frame];
             });
 
             animationFrameTimer -= animationFrameInterval;
@@ -986,13 +1069,15 @@ struct GameLogic final : eng::GameLogicInterface
             }
         }
 
-        component<Sprite>().forEach([&](const auto& sprite, auto id)
+        component<Sprite>().forEach([&](const Sprite& sprite, uint32_t id)
         {
             const auto& entity = entities.at(id);
             glm::vec2 position = glm::mix(glm::vec2(entity.prevx + 0.5, maxTilesVertical - entity.prevy - 0.5),
                     glm::vec2(entity.x + 0.5, maxTilesVertical - entity.y - 0.5), tween);
             scene.instances().push_back(eng::Instance {
                         .position = position,
+                        .minTexCoord = { sprite.flipHorizontal ? 1 : 0, 0 },
+                        .texCoordScale = { sprite.flipHorizontal ? -1 : 1, 1 },
                         .angle = directionAngle(sprite.direction),
                         .textureIndex = sprite.textureIndex,
                         .tintColor = sprite.color,
