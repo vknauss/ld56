@@ -96,9 +96,12 @@ struct ComponentArray : ComponentArrayBase
 struct Entity
 {
     constexpr static uint32_t Invalid = std::numeric_limits<uint32_t>::max();
-    uint32_t x, y;
-    uint32_t prevx, prevy;
-    bool alive;
+};
+
+struct MapCoords
+{
+    uint32_t x = std::numeric_limits<uint32_t>::max();
+    uint32_t y = std::numeric_limits<uint32_t>::max();
 };
 
 struct Sprite
@@ -107,6 +110,10 @@ struct Sprite
     glm::vec4 color { 1, 1, 1, 1 };
     bool flipHorizontal = false;
     Direction direction = Direction::Down;
+    uint32_t x = std::numeric_limits<uint32_t>::max();
+    uint32_t y = std::numeric_limits<uint32_t>::max();
+    uint32_t prevx = std::numeric_limits<uint32_t>::max();
+    uint32_t prevy = std::numeric_limits<uint32_t>::max();
 };
 
 struct Cell
@@ -174,6 +181,7 @@ struct Text
     glm::vec2 scale = { 1.0, 1.0 };
     glm::vec4 background = { 0, 0, 0, 0 };
     glm::vec4 foreground = { 1, 1, 1, 1 };
+    uint32_t x, y;
 };
 
 struct Door
@@ -237,6 +245,7 @@ struct Map
 {
     std::vector<std::string_view> rows;
     uint32_t entitiesNeeded;
+    std::vector<std::string> levelText;
 };
 
 using namespace std::string_view_literals;
@@ -251,6 +260,7 @@ struct GameLogic final : eng::GameLogicInterface
         uint32_t blank;
         CharacterTextureSet enemy;
         CharacterTextureSet friendly;
+        CharacterTextureSet leader;
         std::vector<uint32_t> dotline;
         std::vector<uint32_t> zap;
         std::vector<uint32_t> zapHit;
@@ -263,9 +273,9 @@ struct GameLogic final : eng::GameLogicInterface
     std::map<size_t, std::unique_ptr<ComponentArrayBase>> componentArrays;
 
     std::vector<std::vector<Cell>> cells;
-    std::vector<Entity> entities;
     std::deque<uint32_t> freeEntities;
     std::vector<uint32_t> playerEntities;
+    uint32_t entityIndexCounter = 0;
 
     uint32_t entitiesNeeded;
 
@@ -287,7 +297,7 @@ struct GameLogic final : eng::GameLogicInterface
     std::deque<InputEvent> inputQueue;
     std::deque<uint32_t> inputSpriteEntities;
 
-    uint32_t textTestEntity;
+    uint32_t gubgubCounterText;
 
     template<typename ComponentType>
     ComponentArray<ComponentType>& component()
@@ -306,7 +316,7 @@ struct GameLogic final : eng::GameLogicInterface
         return static_cast<ComponentArray<ComponentType>&>(*it->second);
     }
 
-    uint32_t createEntity(uint32_t x, uint32_t y)
+    uint32_t createEntity()
     {
         uint32_t index;
         if (!freeEntities.empty())
@@ -316,37 +326,28 @@ struct GameLogic final : eng::GameLogicInterface
         }
         else
         {
-            index = entities.size();
-            entities.emplace_back();
+            index = entityIndexCounter++;
         }
-        entities.at(index) = Entity{ .x = x, .y = y, .prevx = x, .prevy = y, .alive = true };
-        cells[y][x].occupants.push_back(index);
         return index;
     }
 
     void destroyEntity(uint32_t index)
     {
-        Entity& entity = entities.at(index);
-        if (entity.alive)
+        if (component<MapCoords>().has(index))
         {
-            for (auto&& [_, componentArray] : componentArrays)
-            {
-                if (componentArray->has(index))
-                {
-                    componentArray->remove(index);
-                }
-            }
-
-            auto& cell = cells[entities[index].y][entities[index].x];
+            const auto& mapCoords = component<MapCoords>().get(index);
+            auto& cell = cells[mapCoords.y][mapCoords.x];
             cell.occupants.erase(std::find(cell.occupants.begin(), cell.occupants.end(), index));
-
-            entity.alive = false;
-            freeEntities.push_back(index);
         }
-        else
+        for (auto&& [_, componentArray] : componentArrays)
         {
-            std::cerr << "entity already destroyed" << std::endl;
+            if (componentArray->has(index))
+            {
+                componentArray->remove(index);
+            }
         }
+
+        freeEntities.push_back(index);
     }
 
     void initPlayer(const std::initializer_list<std::pair<uint32_t, uint32_t>>& positions)
@@ -356,39 +357,45 @@ struct GameLogic final : eng::GameLogicInterface
         if (it != positions.end())
         {
             auto&& [x, y] = *it;
-            uint32_t entity = createEntity(x, y);
+            uint32_t entity = createEntity();
             playerEntities.push_back(entity);
+            component<MapCoords>().add(entity);
             component<Friendly>().add(entity);
-            component<Sprite>().add(entity) = { .color = glm::vec4(1, 1, 0, 1) };
+            component<Sprite>().add(entity);
             component<Solid>().add(entity);
             component<CharacterAnimator>().add(entity) = {
-                .textureSet = &textures.friendly,
+                .textureSet = &textures.leader,
             };
+            moveEntity(entity, x, y);
             ++it;
         }
         for (; it != positions.end(); ++it)
         {
             auto&& [x, y] = *it;
-            uint32_t entity = createEntity(x, y);
+            uint32_t entity = createEntity();
             playerEntities.push_back(entity);
+            component<MapCoords>().add(entity);
             component<Friendly>().add(entity);
             component<Sprite>().add(entity);
             component<Solid>().add(entity);
             component<CharacterAnimator>().add(entity) = {
                 .textureSet = &textures.friendly,
             };
+            moveEntity(entity, x, y);
         }
     }
 
     void createEnemy(uint32_t x, uint32_t y, Direction facingDirection)
     {
-        uint32_t entity = createEntity(x, y);
+        uint32_t entity = createEntity();
+        component<MapCoords>().add(entity);
         component<Enemy>().add(entity) = { .facingDirection = facingDirection };
         component<Sprite>().add(entity);
         component<Solid>().add(entity);
         component<CharacterAnimator>().add(entity) = {
             .textureSet = &textures.enemy,
         };
+        moveEntity(entity, x, y);
     }
 
     void clampDeltaToMap(uint32_t x, uint32_t y, int& dx, int& dy)
@@ -413,14 +420,17 @@ struct GameLogic final : eng::GameLogicInterface
 
     void moveEntity(uint32_t id, uint32_t x, uint32_t y)
     {
-        Entity& entity = entities.at(id);
-        if ((entity.x != x || entity.y != y) && x < cells.front().size() && y < cells.size())
+        auto& mapCoords = component<MapCoords>().get(id);
+        if ((mapCoords.x != x || mapCoords.y != y) && x < cells.front().size() && y < cells.size())
         {
             Cell& newCell = cells[y][x];
             newCell.occupants.push_back(id);
-            Cell& oldCell = cells[entity.y][entity.x];
-            oldCell.occupants.erase(std::find(oldCell.occupants.begin(), oldCell.occupants.end(), id));
-            entity.x = x, entity.y = y;
+            if (mapCoords.x < cells.front().size() && mapCoords.y < cells.size())
+            {
+                Cell& oldCell = cells[mapCoords.y][mapCoords.x];
+                oldCell.occupants.erase(std::find(oldCell.occupants.begin(), oldCell.occupants.end(), id));
+            }
+            mapCoords.x = x, mapCoords.y = y;
         }
     }
 
@@ -456,12 +466,12 @@ struct GameLogic final : eng::GameLogicInterface
 
     void enemyLogic(Enemy& enemy, uint32_t id)
     {
-        auto& entity = entities.at(id);
+        const auto& mapCoords = component<MapCoords>().get(id);
         enemy.prevState = enemy.state;
 
         // scan for player
         if (uint32_t target;
-            scan(entity.x, entity.y, enemy.facingDirection, 0,
+            scan(mapCoords.x, mapCoords.y, enemy.facingDirection, 0,
                 [&](const Cell& cell, uint32_t distance)
                 {
                     if (auto it = std::find_if(cell.occupants.begin(), cell.occupants.end(),
@@ -519,8 +529,8 @@ struct GameLogic final : eng::GameLogicInterface
                 bool validTarget = enemy.target.x < cells.front().size() && enemy.target.y < cells.size();
                 if (validTarget)
                 {
-                    int toTargetX = (int)enemy.target.x - (int)entity.x;
-                    int toTargetY = (int)enemy.target.y - (int)entity.y;
+                    int toTargetX = (int)enemy.target.x - (int)mapCoords.x;
+                    int toTargetY = (int)enemy.target.y - (int)mapCoords.y;
                     // did we reach it?
                     if (toTargetX == 0 && toTargetY == 0)
                     {
@@ -537,8 +547,8 @@ struct GameLogic final : eng::GameLogicInterface
                         else
                         {
                             // are we about to run into a wall?
-                            clampDeltaToMap(entity.x, entity.y, dx, dy);
-                            uint32_t testx = entity.x + dx, testy = entity.y + dy;
+                            clampDeltaToMap(mapCoords.x, mapCoords.y, dx, dy);
+                            uint32_t testx = mapCoords.x + dx, testy = mapCoords.y + dy;
                             const auto& cell = cells[testy][testx];
                             if (cell.solid || std::find_if(cell.occupants.begin(), cell.occupants.end(),
                                         [&](auto oid) { return component<Solid>().has(oid); }) != cell.occupants.end())
@@ -565,7 +575,7 @@ struct GameLogic final : eng::GameLogicInterface
 
                     for (uint32_t i = 0; i < scanDirections.size(); ++i)
                     {
-                        scan(entity.x, entity.y, scanDirections[i], 0,
+                        scan(mapCoords.x, mapCoords.y, scanDirections[i], 0,
                             [&](const Cell& cell, uint32_t distance)
                             {
                                 uint32_t priority = 0;
@@ -609,14 +619,14 @@ struct GameLogic final : eng::GameLogicInterface
                     shouldMoveForward = (bestDistance > 0 && scanDirections[bestIndex] == enemy.facingDirection);
                     enemy.facingDirection = scanDirections[bestIndex];
                     auto [dx, dy] = directionCoords(enemy.facingDirection);
-                    enemy.target = { entity.x + bestDistance * dx, entity.y + bestDistance * dy };
+                    enemy.target = { mapCoords.x + bestDistance * dx, mapCoords.y + bestDistance * dy };
                 }
 
                 if (shouldMoveForward)
                 {
                     auto [dx, dy] = directionCoords(enemy.facingDirection);
-                    clampDeltaToMap(entity.x, entity.y, dx, dy);
-                    moveEntity(id, entity.x + dx, entity.y + dy);
+                    clampDeltaToMap(mapCoords.x, mapCoords.y, dx, dy);
+                    moveEntity(id, mapCoords.x + dx, mapCoords.y + dy);
                 }
             }
         }
@@ -741,16 +751,73 @@ struct GameLogic final : eng::GameLogicInterface
         };
     }
 
+    void loadLeaderTextures(eng::ResourceLoaderInterface& resourceLoader)
+    {
+        uint32_t backDown1 = resourceLoader.loadTexture("textures/BBBackDown1.png");
+        uint32_t backDown2 = resourceLoader.loadTexture("textures/BBBackDown2.png");
+        uint32_t backUp1 = resourceLoader.loadTexture("textures/BBBackUp1.png");
+        uint32_t backUp2 = resourceLoader.loadTexture("textures/BBBackUp2.png");
+        uint32_t frontDown1 = resourceLoader.loadTexture("textures/BBFrontDown1.png");
+        uint32_t frontDown2 = resourceLoader.loadTexture("textures/BBFrontDown2.png");
+        uint32_t frontUp1 = resourceLoader.loadTexture("textures/BBFrontUp1.png");
+        uint32_t frontUp2 = resourceLoader.loadTexture("textures/BBFrontUp2.png");
+        uint32_t frontUp2Blink = resourceLoader.loadTexture("textures/BBFrontUp2Blink.png");
+        uint32_t sideDown1 = resourceLoader.loadTexture("textures/BBSideDown1.png");
+        uint32_t sideDown2 = resourceLoader.loadTexture("textures/BBSideDown2.png");
+        uint32_t sideUp1 = resourceLoader.loadTexture("textures/BBSideUp1.png");
+        uint32_t sideUp2 = resourceLoader.loadTexture("textures/BBSideUp2.png");
+        uint32_t sideUp2Blink = resourceLoader.loadTexture("textures/BBSideUp2Blink.png");
+
+        textures.leader = {
+            .front = {
+                frontDown1,
+                frontDown2,
+                frontDown2,
+                frontUp1,
+                frontUp2,
+                frontUp2,
+                frontDown1,
+                frontDown2,
+                frontDown2,
+                frontUp1,
+                frontUp2Blink,
+                frontUp2,
+            },
+            .back = {
+                backDown1,
+                backDown2,
+                backDown2,
+                backUp1,
+                backUp2,
+                backUp2,
+            },
+            .side = {
+                sideDown1,
+                sideDown2,
+                sideDown2,
+                sideUp1,
+                sideUp2,
+                sideUp2,
+                sideDown1,
+                sideDown2,
+                sideDown2,
+                sideUp1,
+                sideUp2Blink,
+                sideUp2,
+            },
+        };
+    }
+
     void loadLevel(uint32_t index)
     {
         const Map& map = maps[index];
         componentArrays.clear();
-        entities.clear();
         freeEntities.clear();
         playerEntities.clear();
         inputQueue.clear();
         inputSpriteEntities.clear();
-        textTestEntity = Entity::Invalid;
+        gubgubCounterText = Entity::Invalid;
+        entityIndexCounter = 0;
 
         cells.clear();
         cells.resize(map.rows.size());
@@ -792,8 +859,10 @@ struct GameLogic final : eng::GameLogicInterface
         {
             for (auto&& [x, y] : it->second)
             {
-                auto id = createEntity(x, y);
+                auto id = createEntity();
+                component<MapCoords>().add(id);
                 component<PatrolPoint>().add(id);
+                moveEntity(id, x, y);
             }
         }
 
@@ -801,24 +870,49 @@ struct GameLogic final : eng::GameLogicInterface
         {
             for (auto&& [x, y] : it->second)
             {
-                auto id = createEntity(x, y);
+                auto id = createEntity();
                 component<Door>().add(id);
                 component<Solid>().add(id);
                 component<Sprite>().add(id) = {
                     .textureIndex = textures.blank,
                     .color = { 1, 0, 0, 1 },
                 };
+                component<MapCoords>().add(id);
+                moveEntity(id, x, y);
             }
         }
 
-        textTestEntity = createEntity(0, 0);
-        component<Text>().add(textTestEntity) = Text{
+        gubgubCounterText = createEntity();
+        component<Text>().add(gubgubCounterText) = Text{
             .text = "GubGubs",
             .foreground = { 0.8, 0.2, 0.0, 1 },
+            .x = 0,
+            .y = 0,
         };
+
+        for (uint32_t i = 0; i < map.levelText.size(); ++i)
+        {
+            component<Text>().add(createEntity()) = {
+                .text = map.levelText[i],
+                .background = { 0, 0, 0, 1 },
+                .foreground = { 1, 1, 1, 1 },
+                .x = 0,
+                .y = static_cast<uint32_t>(maxTilesVertical - map.levelText.size() + i),
+            };
+        }
 
         entitiesNeeded = map.entitiesNeeded;
         currentLevel = index;
+
+        component<MapCoords>().forEach([&](MapCoords& mapCoords, uint32_t id)
+        {
+            if (component<Sprite>().has(id))
+            {
+                auto& sprite = component<Sprite>().get(id);
+                sprite.x = mapCoords.x;
+                sprite.y = mapCoords.y;
+            }
+        });
     }
 
     void init(eng::ResourceLoaderInterface& resourceLoader, eng::SceneInterface& scene, eng::InputInterface& input) override
@@ -850,6 +944,7 @@ struct GameLogic final : eng::GameLogicInterface
         textures.font = resourceLoader.loadTexture("textures/font.png");
         loadEnemyTextures(resourceLoader);
         loadFriendlyTextures(resourceLoader);
+        loadLeaderTextures(resourceLoader);
 
         directionInputMappings[Direction::Up] = input.createMapping();
         directionInputMappings[Direction::Left] = input.createMapping();
@@ -862,6 +957,37 @@ struct GameLogic final : eng::GameLogicInterface
         input.mapKey(directionInputMappings[Direction::Right], glfwGetKeyScancode(GLFW_KEY_D));
 
         maps = {
+            Map {
+                .rows = {
+                    "XXXXXDXXXXX"sv,
+                    "X_________X"sv,
+                    "X_________X"sv,
+                    "X_________X"sv,
+                    "X____P____X"sv,
+                    "X_________X"sv,
+                    "X_________X"sv,
+                    "XXXXXXXXXXX"sv,
+                },
+                .entitiesNeeded = 1,
+                .levelText = { "reach the door to complete level" },
+            },
+            Map {
+                .rows = {
+                    "XXXXXDXXXXX"sv,
+                    "X_________X"sv,
+                    "X_E_______X"sv,
+                    "X_________X"sv,
+                    "X____P____X"sv,
+                    "X_________X"sv,
+                    "X_________X"sv,
+                    "XXXXXXXXXXX"sv,
+                },
+                .entitiesNeeded = 2,
+                .levelText = {
+                    "collide with enemies to stun them",
+                    "befriend stunned enemy by walking over",
+                },
+            },
             Map {
                 .rows = {
                     "XXXXXXXXXXXXXXXXXXXX"sv,
@@ -879,7 +1005,6 @@ struct GameLogic final : eng::GameLogicInterface
                 },
                 .entitiesNeeded = 4,
             },
-
             Map {
                 .rows = {
                     "XXXXXXXXXXXXXXXXXXXX"sv,
@@ -904,11 +1029,11 @@ struct GameLogic final : eng::GameLogicInterface
 
     void gameTick()
     {
-        for (auto& entity : entities)
+        component<Sprite>().forEach([&](Sprite& sprite, uint32_t id)
         {
-            entity.prevx = entity.x;
-            entity.prevy = entity.y;
-        }
+            sprite.prevx = sprite.x;
+            sprite.prevy = sprite.y;
+        });
 
         if (!inputSpriteEntities.empty() && component<InputIcon>().get(inputSpriteEntities.front()).completed)
         {
@@ -920,23 +1045,25 @@ struct GameLogic final : eng::GameLogicInterface
             InputEvent event = inputQueue.front();
             inputQueue.pop_front();
             component<InputIcon>().get(inputSpriteEntities.front()).completed = true;
-            moveEntity(inputSpriteEntities.front(), entities[inputSpriteEntities.front()].x, entities[inputSpriteEntities.front()].y - 1);
+            auto& sprite = component<Sprite>().get(inputSpriteEntities.front());
+            sprite.y -= 1;
 
             for (uint32_t i = 1; i < inputSpriteEntities.size(); ++i)
             {
                 auto id = inputSpriteEntities[i];
-                moveEntity(id, entities[id].x + 1, entities[id].y);
+                auto& sprite = component<Sprite>().get(id);
+                sprite.x += 1;
             }
 
             if (!playerEntities.empty())
             {
-                Entity& player = entities[playerEntities.front()];
                 component<CharacterAnimator>().get(playerEntities.front()).direction = event.direction;
+                const auto& coords = component<MapCoords>().get(playerEntities.front());
 
                 auto [dx, dy] = directionCoords(event.direction);
-                clampDeltaToMap(player.x, player.y, dx, dy);
+                clampDeltaToMap(coords.x, coords.y, dx, dy);
 
-                const auto& cell = cells[player.y + dy][player.x + dx];
+                const auto& cell = cells[coords.y + dy][coords.x + dx];
                 if (!cell.solid)
                 {
                     bool blocked = false;
@@ -988,12 +1115,12 @@ struct GameLogic final : eng::GameLogicInterface
 
                             for (uint32_t i = playerEntities.size() - 1; i > 0; --i)
                             {
-                                auto& nextEntity = entities[playerEntities[i - 1]];
-                                moveEntity(playerEntities[i], nextEntity.x, nextEntity.y);
+                                const auto& nextCoords = component<MapCoords>().get(playerEntities[i - 1]);
+                                moveEntity(playerEntities[i], nextCoords.x, nextCoords.y);
                             }
 
-                            moveEntity(playerEntities.front(), player.x + dx, player.y + dy);
-                            const auto& cell = cells[player.y][player.x];
+                            moveEntity(playerEntities.front(), coords.x + dx, coords.y + dy);
+                            const auto& cell = cells[coords.y][coords.x];
                             if (auto it = std::find_if(cell.occupants.begin(), cell.occupants.end(),
                                     [&](auto oid){ return component<Door>().has(oid); });
                                 it != cell.occupants.end())
@@ -1015,12 +1142,12 @@ struct GameLogic final : eng::GameLogicInterface
 
         for (uint32_t i = 1; i < playerEntities.size(); ++i)
         {
-            auto& entity = entities[playerEntities[i]];
-            auto& nextEntity = entities[playerEntities[i - 1]];
-            component<CharacterAnimator>().get(playerEntities[i]).direction = directionFromDelta((int)nextEntity.x - (int)entity.x, (int)nextEntity.y - (int)entity.y);
+            const auto& coords = component<MapCoords>().get(playerEntities[i]);
+            const auto& nextCoords = component<MapCoords>().get(playerEntities[i - 1]);
+            component<CharacterAnimator>().get(playerEntities[i]).direction = directionFromDelta((int)nextCoords.x - (int)coords.x, (int)nextCoords.y - (int)coords.y);
         }
 
-        component<Text>().get(textTestEntity).text = "GubGubs: " + std::to_string(playerEntities.size()) + " / " + std::to_string(entitiesNeeded);
+        component<Text>().get(gubgubCounterText).text = "GubGubs: " + std::to_string(playerEntities.size()) + " / " + std::to_string(entitiesNeeded);
         component<Door>().forEach([&](Door& door, uint32_t id)
         {
             const bool open = playerEntities.size() == entitiesNeeded;
@@ -1060,6 +1187,16 @@ struct GameLogic final : eng::GameLogicInterface
         {
             enemyLogic(enemy, id);
         });
+
+        component<MapCoords>().forEach([&](MapCoords& mapCoords, uint32_t id)
+        {
+            if (component<Sprite>().has(id))
+            {
+                auto& sprite = component<Sprite>().get(id);
+                sprite.x = mapCoords.x;
+                sprite.y = mapCoords.y;
+            }
+        });
     }
 
     void runFrame(eng::SceneInterface& scene, eng::InputInterface& input, const double deltaTime) override
@@ -1075,11 +1212,13 @@ struct GameLogic final : eng::GameLogicInterface
                 {
                     --offset;
                 }
-                uint32_t id = createEntity(maxTilesHorizontal - 1 - offset, maxTilesVertical - 1);
+                uint32_t id = createEntity();
                 component<Sprite>().add(id) = Sprite{
                     .textureIndex = textures.arrow,
                     .color = { 1, 1, 0, 1 },
                     .direction = direction,
+                    .x = maxTilesHorizontal - 1 - offset,
+                    .y = maxTilesVertical - 1,
                 };
                 component<InputIcon>().add(id);
                 inputSpriteEntities.push_back(id);
@@ -1141,7 +1280,6 @@ struct GameLogic final : eng::GameLogicInterface
         }
         tweenFrameTimer += deltaTime;
 
-
         scene.instances().clear();
         for (uint32_t i = 0; i < cells.size(); ++i)
         {
@@ -1159,9 +1297,12 @@ struct GameLogic final : eng::GameLogicInterface
 
         component<Sprite>().forEach([&](const Sprite& sprite, uint32_t id)
         {
-            const auto& entity = entities.at(id);
-            glm::vec2 position = glm::mix(glm::vec2(entity.prevx + 0.5, maxTilesVertical - entity.prevy - 0.5),
-                    glm::vec2(entity.x + 0.5, maxTilesVertical - entity.y - 0.5), tween);
+            glm::vec2 position(sprite.x + 0.5, maxTilesVertical - sprite.y - 0.5);
+            if (tween < 1.0f && sprite.prevx != std::numeric_limits<uint32_t>::max() && sprite.prevy != std::numeric_limits<uint32_t>::max()
+                    && (sprite.prevx != sprite.x || sprite.prevy != sprite.y))
+            {
+                position = glm::mix(glm::vec2(sprite.prevx + 0.5, maxTilesVertical - sprite.prevy - 0.5), position, tween);
+            }
             scene.instances().push_back(eng::Instance {
                         .position = position,
                         .minTexCoord = { sprite.flipHorizontal ? 1 : 0, 0 },
@@ -1174,7 +1315,7 @@ struct GameLogic final : eng::GameLogicInterface
 
         component<Enemy>().forEach([&](Enemy& enemy, uint32_t id)
         {
-            const auto& entity = entities[id];
+            const auto& mapCoords = component<MapCoords>().get(id);
 
             uint32_t textureIndex;
             uint32_t endTextureIndex;
@@ -1207,7 +1348,7 @@ struct GameLogic final : eng::GameLogicInterface
             }
             float angle = directionAngle(enemy.facingDirection) - glm::half_pi<float>();
 
-            scan(entity.x, entity.y, enemy.facingDirection, 0,
+            scan(mapCoords.x, mapCoords.y, enemy.facingDirection, 0,
                 [&](const Cell& cell, uint32_t distance)
                 {
                     if (auto it = std::find_if(cell.occupants.begin(), cell.occupants.end(),
@@ -1237,10 +1378,9 @@ struct GameLogic final : eng::GameLogicInterface
 
         component<Text>().forEach([&](const Text& text, uint32_t id)
         {
-            const auto& entity = entities[id];
             constexpr glm::vec2 texCoordScale = { 1.0f / 16.0f, 1.0f / 8.0f };
             scene.instances().push_back(eng::Instance {
-                    .position = { entity.x + 0.25f * text.text.size(), maxTilesVertical - entity.y - 0.5 },
+                    .position = { text.x + 0.25f * text.text.size(), maxTilesVertical - text.y - 0.5 },
                     .scale = { text.scale.x * 0.5f * text.text.size(), text.scale.y },
                     .textureIndex = textures.blank,
                     .tintColor = text.background,
@@ -1249,7 +1389,7 @@ struct GameLogic final : eng::GameLogicInterface
             {
                 glm::vec2 minTexCoord = glm::vec2(text.text[i] / 8, text.text[i] % 8) * texCoordScale;
                 scene.instances().push_back(eng::Instance {
-                        .position = { entity.x + i * 0.5 + 0.25, maxTilesVertical - entity.y - 0.5 },
+                        .position = { text.x + i * 0.5 + 0.25, maxTilesVertical - text.y - 0.5 },
                         .scale = { 0.5, 1.0 },
                         .minTexCoord = minTexCoord,
                         .texCoordScale = texCoordScale,
