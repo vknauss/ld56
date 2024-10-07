@@ -133,6 +133,7 @@ struct Enemy
     struct { uint32_t x = std::numeric_limits<uint32_t>::max(), y = std::numeric_limits<uint32_t>::max(); } target;
     Direction facingDirection = Direction::Down;
     State state = State::Patrolling;
+    State prevState = State::Patrolling;
     uint32_t frame = 0;
     uint32_t lineFrame = 0;
 };
@@ -262,9 +263,9 @@ struct GameLogic final : eng::GameLogicInterface
     std::deque<uint32_t> freeEntities;
     std::vector<uint32_t> playerEntities;
 
-    static constexpr int animationFramesPerTick = 2;
+    static constexpr int animationFramesPerTick = 6;
     static constexpr int tweenFramesPerTick = 12;
-    static constexpr double tickInterval = 0.25;
+    static constexpr double tickInterval = 0.5;
     static constexpr double animationFrameInterval = tickInterval / animationFramesPerTick;
     static constexpr double tweenFrameInterval = tickInterval / tweenFramesPerTick;
     double tickTimer = 0;
@@ -442,6 +443,7 @@ struct GameLogic final : eng::GameLogicInterface
     void enemyLogic(Enemy& enemy, uint32_t id)
     {
         auto& entity = entities.at(id);
+        enemy.prevState = enemy.state;
 
         // scan for player
         if (uint32_t target;
@@ -500,15 +502,15 @@ struct GameLogic final : eng::GameLogicInterface
             else
             {
                 enemy.state = Enemy::State::Patrolling;
-                // do we have a valid target?
-                if (enemy.target.x < map.cells.front().size() && enemy.target.y < map.cells.size())
+                bool validTarget = enemy.target.x < map.cells.front().size() && enemy.target.y < map.cells.size();
+                if (validTarget)
                 {
                     int toTargetX = (int)enemy.target.x - (int)entity.x;
                     int toTargetY = (int)enemy.target.y - (int)entity.y;
                     // did we reach it?
                     if (toTargetX == 0 && toTargetY == 0)
                     {
-                        enemy.target = { std::numeric_limits<uint32_t>::max(), std::numeric_limits<uint32_t>::max() };
+                        validTarget = false;
                     }
                     else
                     {
@@ -516,7 +518,7 @@ struct GameLogic final : eng::GameLogicInterface
                         auto [dx, dy] = directionCoords(enemy.facingDirection);
                         if (dx != glm::sign(toTargetX) || dy != glm::sign(toTargetY))
                         {
-                            enemy.target = { std::numeric_limits<uint32_t>::max(), std::numeric_limits<uint32_t>::max() };
+                            validTarget = false;
                         }
                         else
                         {
@@ -524,27 +526,17 @@ struct GameLogic final : eng::GameLogicInterface
                             clampDeltaToMap(entity.x, entity.y, dx, dy);
                             uint32_t testx = entity.x + dx, testy = entity.y + dy;
                             const auto& cell = map.cells[testy][testx];
-                            if (cell.solid)
-                            {
-                                enemy.target = { std::numeric_limits<uint32_t>::max(), std::numeric_limits<uint32_t>::max() };
-                            }
-                            else if (std::find_if(cell.occupants.begin(), cell.occupants.end(),
+                            if (cell.solid || std::find_if(cell.occupants.begin(), cell.occupants.end(),
                                         [&](auto oid) { return component<Solid>().has(oid); }) != cell.occupants.end())
                             {
-                                enemy.target = { std::numeric_limits<uint32_t>::max(), std::numeric_limits<uint32_t>::max() };
+                                validTarget = false;
                             }
                         }
                     }
                 }
 
-                // do we still have a valid target?
-                if (enemy.target.x < map.cells.front().size() && enemy.target.y < map.cells.size())
-                {
-                    auto [dx, dy] = directionCoords(enemy.facingDirection);
-                    clampDeltaToMap(entity.x, entity.y, dx, dy);
-                    moveEntity(id, entity.x + dx, entity.y + dy);
-                }
-                else
+                bool shouldMoveForward = true;
+                if (!validTarget)
                 {
                     // scan in current direction, then each of the perpendicular directions
                     const std::array scanDirections {
@@ -553,7 +545,7 @@ struct GameLogic final : eng::GameLogicInterface
                         static_cast<Direction>((static_cast<int>(enemy.facingDirection) + 3) % 4),
                     };
 
-                    bool anyScanFound = false;
+                    uint32_t bestPriority = 0;
                     uint32_t bestDistance = 0;
                     int bestIndex = 0;
 
@@ -562,30 +554,27 @@ struct GameLogic final : eng::GameLogicInterface
                         scan(entity.x, entity.y, scanDirections[i], 0,
                             [&](const Cell& cell, uint32_t distance)
                             {
-                                bool found = false;
+                                uint32_t priority = 0;
                                 for (auto oid : cell.occupants)
                                 {
                                     if (component<Solid>().has(oid))
                                     {
-                                        found = component<Friendly>().has(oid);
+                                        priority = component<Friendly>().has(oid) ? 2 : 0;
                                         break;
                                     }
                                     if (component<PatrolPoint>().has(oid))
                                     {
-                                        found = true;
+                                        priority = 1;
+                                        // do not break so we can make sure not obstructed
                                     }
                                 }
-                                if (found)
+                                if (priority > bestPriority || (priority > 0 && priority == bestPriority && distance < bestDistance))
                                 {
-                                    if (!anyScanFound || distance < bestDistance)
-                                    {
-                                        anyScanFound = true;
-                                        bestDistance = distance;
-                                        bestIndex = i;
-                                    }
-                                    return true;
+                                    bestPriority = priority;
+                                    bestDistance = distance;
+                                    bestIndex = i;
                                 }
-                                if (!anyScanFound && distance > bestDistance)
+                                else if (bestPriority == 0 && distance > bestDistance)
                                 {
                                     bestDistance = distance;
                                     bestIndex = i;
@@ -594,11 +583,23 @@ struct GameLogic final : eng::GameLogicInterface
                             });
                     }
 
+                    shouldMoveForward = (scanDirections[bestIndex] == enemy.facingDirection);
                     enemy.facingDirection = scanDirections[bestIndex];
                     auto [dx, dy] = directionCoords(enemy.facingDirection);
                     enemy.target = { entity.x + bestDistance * dx, entity.y + bestDistance * dy };
                 }
+
+                if (shouldMoveForward)
+                {
+                    auto [dx, dy] = directionCoords(enemy.facingDirection);
+                    clampDeltaToMap(entity.x, entity.y, dx, dy);
+                    moveEntity(id, entity.x + dx, entity.y + dy);
+                }
             }
+        }
+        if (enemy.prevState != enemy.state)
+        {
+            enemy.lineFrame = 0;
         }
     }
 
@@ -766,9 +767,8 @@ struct GameLogic final : eng::GameLogicInterface
 
         textTestEntity = createEntity(0, 0);
         component<Text>().add(textTestEntity) = Text{
-            .text = "hello world",
-            .background = { 0, 0, 0, 1 },
-            .foreground = { 1, 1, 1, 1 },
+            .text = "GubGubs",
+            .foreground = { 0.8, 0.2, 0.0, 1 },
         };
     }
 
@@ -925,14 +925,6 @@ struct GameLogic final : eng::GameLogicInterface
             }
         }
 
-        if (tickTimer >= tickInterval)
-        {
-            gameTick();
-            tickTimer -= tickInterval;
-            tweenFrame = 0;
-        }
-        tickTimer += deltaTime;
-
         if (animationFrameTimer >= animationFrameInterval)
         {
             component<Enemy>().forEach([&](Enemy& enemy, uint32_t id)
@@ -953,6 +945,14 @@ struct GameLogic final : eng::GameLogicInterface
         }
         animationFrameTimer += deltaTime;
 
+        if (tickTimer >= tickInterval)
+        {
+            gameTick();
+            tickTimer -= tickInterval;
+            tweenFrame = 0;
+        }
+        tickTimer += deltaTime;
+
         if (tweenFrameTimer >= tweenFrameInterval)
         {
             constexpr int tweenEndFrame = tweenFramesPerTick / 2;
@@ -965,6 +965,8 @@ struct GameLogic final : eng::GameLogicInterface
             {
                 component<Sprite>().get(inputSpriteEntities.front()).color.a = 1.0f - tween;
             }
+
+            tweenFrameTimer -= tweenFrameInterval;
         }
         tweenFrameTimer += deltaTime;
 
