@@ -802,7 +802,7 @@ struct GameLogic final : eng::GameLogicInterface
         if (auto it = markers.find('P'); it != markers.end() && !it->second.empty())
         {
             auto&& [x, y] = it->second.front();
-            initPlayer({ {x, y}, {x-1, y}, {x-1, y-1} });
+            initPlayer({ {x, y}, /* {x-1, y}, {x-1, y-1} */ });
         }
         if (auto it = markers.find('E'); it != markers.end())
         {
@@ -945,6 +945,16 @@ struct GameLogic final : eng::GameLogicInterface
                             }
 
                             moveEntity(playerEntities.front(), player.x + dx, player.y + dy);
+                            const auto& cell = map.cells[player.y][player.x];
+                            if (auto it = std::find_if(cell.occupants.begin(), cell.occupants.end(),
+                                    [&](auto oid){ return component<Door>().has(oid); });
+                                it != cell.occupants.end())
+                            {
+                                if (component<Door>().get(*it).open)
+                                {
+                                    std::cout << "win condition" << std::endl;
+                                }
+                            }
                         }
                     }
 
@@ -964,6 +974,24 @@ struct GameLogic final : eng::GameLogicInterface
         }
 
         component<Text>().get(textTestEntity).text = "GubGubs: " + std::to_string(playerEntities.size()) + " / " + std::to_string(entitiesNeeded);
+        component<Door>().forEach([&](Door& door, uint32_t id)
+        {
+            const bool open = playerEntities.size() == entitiesNeeded;
+            if (open != door.open)
+            {
+                door.open = open;
+                if (open)
+                {
+                    component<Solid>().remove(id);
+                    component<Sprite>().get(id).color = { 0, 1, 0, 1 };
+                }
+                else
+                {
+                    component<Solid>().add(id);
+                    component<Sprite>().get(id).color = { 1, 0, 0, 1 };
+                }
+            }
+        });
 
         component<Neutral>().forEach([this](Neutral& neutral, uint32_t id)
         {
