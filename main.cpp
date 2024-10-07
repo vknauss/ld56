@@ -550,6 +550,13 @@ struct GameLogic final : eng::GameLogicInterface
                         playerEntities.erase(it, playerEntities.end());
                     }
                 }
+                else
+                {
+                    component<Friendly>().remove(target);
+                    component<Neutral>().add(target).wasFriendly = true;
+                    component<CharacterAnimator>().remove(target);
+                    component<SequenceAnimator>().get(target).sequence = &textures.friendlySleepy;
+                }
             }
         }
         else
@@ -1072,6 +1079,23 @@ struct GameLogic final : eng::GameLogicInterface
                 .rows = {
                     "XXXXXDXXXXX"sv,
                     "X_________X"sv,
+                    "X__F______X"sv,
+                    "X_________X"sv,
+                    "X____P____X"sv,
+                    "X_________X"sv,
+                    "X_________X"sv,
+                    "XXXXXXXXXXX"sv,
+                },
+                .entitiesNeeded = 2,
+                .levelText = {
+                    "RECRUIT A FRIENDLY GUBGUB BY WALKING INTO IT",
+                    "SAVE ALL THE GUBGUBS TO OPEN THE DOOR",
+                },
+            },
+            Map {
+                .rows = {
+                    "XXXXXDXXXXX"sv,
+                    "X_________X"sv,
                     "X_E_______X"sv,
                     "X_________X"sv,
                     "X____P____X"sv,
@@ -1083,25 +1107,42 @@ struct GameLogic final : eng::GameLogicInterface
                 .levelText = {
                     "INFECTED GUBGUBS ARE BRUTISH AND AGGRESSIVE",
                     "THEY CAN'T BE REASONED WITH, BUT CAN BE STUNNED BY A HEAD ON COLLISION",
-                    "BEFRIEND STUNNED GUBGUBS BY WALKING OVER THEM",
+                    "STUNNED GUBGUBS CAN BE RECRUITED",
+                    "BUT WILL REVERT TO THEIR HOSTILE STATE IF YOU ARE TOO SLOW",
                 },
             },
             Map {
                 .rows = {
                     "XXXXXDXXXXX"sv,
                     "X_________X"sv,
-                    "X_TT___TT_X"sv,
-                    "X_E_____E_X"sv,
+                    "X_TT______X"sv,
+                    "X_E_______X"sv,
                     "X____P____X"sv,
-                    "X_TT___TT_X"sv,
+                    "X_TT____F_X"sv,
                     "X_________X"sv,
                     "XXXXXXXXXXX"sv,
                 },
                 .entitiesNeeded = 3,
                 .levelText = {
-                    "IF AN INFECTED SPOTS YOU OR YOUR FOLLOWERS IT WILL SHOOT ITS STUN BEAM",
+                    "IF AN INFECTED SPOTS YOU OR A FRIENDLY IT WILL SHOOT ITS STUN BEAM",
                     "ANY FOLLOWING GUBGUB IN THE TRAIN WILL BE STUNNED,",
                     "BUT THE LEADER IS NOT AFFECTED",
+                    "ONCE STUNNED, A FRIENDLY WILL TURN HOSTILE IF NOT RECRUITED",
+                },
+            },
+            Map {
+                .rows = {
+                    "XXXXXDXXXXX"sv,
+                    "X_________X"sv,
+                    "X_TT_F_TT_X"sv,
+                    "X_E_____E_X"sv,
+                    "X____P____X"sv,
+                    "X_TT_F_TT_X"sv,
+                    "X_________X"sv,
+                    "XXXXXXXXXXX"sv,
+                },
+                .entitiesNeeded = 5,
+                .levelText = {
                 },
             },
             Map {
@@ -1112,20 +1153,20 @@ struct GameLogic final : eng::GameLogicInterface
                     "X__T_T__T_T________X"sv,
                     "X___XE________T_T__X"sv,
                     "X__T_T_________XE__X"sv,
-                    "X_____________T_T__X"sv,
-                    "X________P_________X"sv,
+                    "X________P____T_T__X"sv,
+                    "XF________________FX"sv,
                     "X__________________D"sv,
                     "X__________________X"sv,
                     "XT________________TX"sv,
                     "XXXXXXXXXXXXXXXXXXXX"sv,
                 },
-                .entitiesNeeded = 4,
+                .entitiesNeeded = 6,
             },
             Map {
                 .rows = {
                     "XXXXXXXXXXXXXXXXXXXX"sv,
                     "X_T_______E______T_X"sv,
-                    "X__XXXXXXXXXXXXXX__X"sv,
+                    "X__XXXXXXXXXXXXXX_FX"sv,
                     "X__X________E____T_X"sv,
                     "X__XT___________T__X"sv,
                     "X__X_XXXXXXXXXXX___X"sv,
@@ -1136,18 +1177,22 @@ struct GameLogic final : eng::GameLogicInterface
                     "X_T_T_____T_T______X"sv,
                     "XXXXXXXXXXXXXXXXXXXX"sv,
                 },
-                .entitiesNeeded = 5,
+                .entitiesNeeded = 6,
             },
             Map {
                 .rows = {
-                    "XXXXXXXXXXX"sv,
-                    "X_________X"sv,
-                    "X__F___F__X"sv,
-                    "X_________X"sv,
-                    "X____P____X"sv,
-                    "X__F___F__X"sv,
-                    "X_________X"sv,
-                    "XXXXXXXXXXX"sv,
+                    "XXXXXXXXXXXXXXXXXXXX"sv,
+                    "X__F_______________X"sv,
+                    "X_________F____F___X"sv,
+                    "X_____F____________X"sv,
+                    "X_____________F____X"sv,
+                    "X__________________X"sv,
+                    "X____F___P_________X"sv,
+                    "X_____________F____X"sv,
+                    "X__________________X"sv,
+                    "X___F____F_____F___X"sv,
+                    "X__________________X"sv,
+                    "XXXXXXXXXXXXXXXXXXXX"sv,
                 },
                 .entitiesNeeded = 0,
                 .levelText = {
