@@ -279,6 +279,8 @@ struct GameLogic final : eng::GameLogicInterface
         uint32_t font;
         uint32_t wall;
         uint32_t floor;
+        uint32_t doorClosed;
+        uint32_t doorOpen;
     } textures;
 
     std::map<Direction, uint32_t> directionInputMappings;
@@ -412,6 +414,20 @@ struct GameLogic final : eng::GameLogicInterface
         component<Solid>().add(entity);
         component<CharacterAnimator>().add(entity) = {
             .textureSet = &textures.enemy,
+        };
+        component<SequenceAnimator>().add(entity);
+        moveEntity(entity, x, y);
+    }
+
+    void createFriendly(uint32_t x, uint32_t y, Direction facingDirection)
+    {
+        uint32_t entity = createEntity();
+        component<MapCoords>().add(entity);
+        component<Friendly>().add(entity);
+        component<Sprite>().add(entity);
+        component<Solid>().add(entity);
+        component<CharacterAnimator>().add(entity) = {
+            .textureSet = &textures.friendly,
         };
         component<SequenceAnimator>().add(entity);
         moveEntity(entity, x, y);
@@ -878,6 +894,14 @@ struct GameLogic final : eng::GameLogicInterface
             }
         }
 
+        if (auto it = markers.find('F'); it != markers.end())
+        {
+            for (auto&& [x, y] : it->second)
+            {
+                createFriendly(x, y, Direction::Down);
+            }
+        }
+
         if (auto it = markers.find('T'); it != markers.end())
         {
             for (auto&& [x, y] : it->second)
@@ -897,8 +921,7 @@ struct GameLogic final : eng::GameLogicInterface
                 component<Door>().add(id);
                 component<Solid>().add(id);
                 component<Sprite>().add(id) = {
-                    .textureIndex = textures.blank,
-                    .color = { 1, 0, 0, 1 },
+                    .textureIndex = textures.doorClosed,
                 };
                 component<MapCoords>().add(id);
                 moveEntity(id, x, y);
@@ -907,7 +930,7 @@ struct GameLogic final : eng::GameLogicInterface
 
         gubgubCounterText = createEntity();
         component<Text>().add(gubgubCounterText) = Text{
-            .text = "GubGubs",
+            .text = "",
             .scale = { 0.75, 0.75 },
             .background = { 48.0/255.0, 56.0/255.0, 67.0/255.0, 0.8 },
             .foreground = { 164.0/255.0, 197.0/255.0, 175.0/255.0, 1 },
@@ -1010,6 +1033,8 @@ struct GameLogic final : eng::GameLogicInterface
         textures.font = resourceLoader.loadTexture("textures/font.png");
         textures.wall = resourceLoader.loadTexture("textures/WallObstacle.png");
         textures.floor = resourceLoader.loadTexture("textures/FloorTile.png");
+        textures.doorClosed = resourceLoader.loadTexture("textures/DoorClosed.png");
+        textures.doorOpen = resourceLoader.loadTexture("textures/DoorOpen.png");
         loadEnemyTextures(resourceLoader);
         loadFriendlyTextures(resourceLoader);
         loadLeaderTextures(resourceLoader);
@@ -1113,6 +1138,23 @@ struct GameLogic final : eng::GameLogicInterface
                 },
                 .entitiesNeeded = 5,
             },
+            Map {
+                .rows = {
+                    "XXXXXXXXXXX"sv,
+                    "X_________X"sv,
+                    "X__F___F__X"sv,
+                    "X_________X"sv,
+                    "X____P____X"sv,
+                    "X__F___F__X"sv,
+                    "X_________X"sv,
+                    "XXXXXXXXXXX"sv,
+                },
+                .entitiesNeeded = 0,
+                .levelText = {
+                    "THE GUBGUBS ARE SAVED",
+                    "THANKS FOR PLAYING",
+                },
+            },
         };
 
         loadLevel(0);
@@ -1174,7 +1216,9 @@ struct GameLogic final : eng::GameLogicInterface
                             target = oid;
                             break;
                         }
-                        if (component<Neutral>().has(oid))
+                        if (component<Neutral>().has(oid) ||
+                            (component<Friendly>().has(oid) &&
+                                 std::find(playerEntities.begin(), playerEntities.end(), oid) == playerEntities.end()))
                         {
                             capture = true;
                             target = oid;
@@ -1207,11 +1251,14 @@ struct GameLogic final : eng::GameLogicInterface
                         {
                             if (capture)
                             {
-                                component<Neutral>().remove(target);
-                                component<Friendly>().add(target);
-                                component<CharacterAnimator>().add(target) = {
-                                    .textureSet = &textures.friendly,
-                                };
+                                if (component<Neutral>().has(target))
+                                {
+                                    component<Neutral>().remove(target);
+                                    component<Friendly>().add(target);
+                                    component<CharacterAnimator>().add(target) = {
+                                        .textureSet = &textures.friendly,
+                                    };
+                                }
                                 playerEntities.push_back(target);
                             }
 
@@ -1248,22 +1295,29 @@ struct GameLogic final : eng::GameLogicInterface
             component<CharacterAnimator>().get(playerEntities[i]).direction = directionFromDelta((int)nextCoords.x - (int)coords.x, (int)nextCoords.y - (int)coords.y);
         }
 
-        component<Text>().get(gubgubCounterText).text = "GubGubs: " + std::to_string(playerEntities.size()) + " / " + std::to_string(entitiesNeeded);
+        if (entitiesNeeded > 0)
+        {
+            component<Text>().get(gubgubCounterText).text = "GubGubs: " + std::to_string(playerEntities.size()) + " / " + std::to_string(entitiesNeeded);
+        }
+        else
+        {
+            component<Text>().get(gubgubCounterText).text = "";
+        }
         component<Door>().forEach([&](Door& door, uint32_t id)
         {
-            const bool open = playerEntities.size() == entitiesNeeded;
+            const bool open = playerEntities.size() >= entitiesNeeded;
             if (open != door.open)
             {
                 door.open = open;
                 if (open)
                 {
                     component<Solid>().remove(id);
-                    component<Sprite>().get(id).color = { 0, 1, 0, 1 };
+                    component<Sprite>().get(id).textureIndex = textures.doorOpen;
                 }
                 else
                 {
                     component<Solid>().add(id);
-                    component<Sprite>().get(id).color = { 1, 0, 0, 1 };
+                    component<Sprite>().get(id).textureIndex = textures.doorClosed;
                 }
             }
         });

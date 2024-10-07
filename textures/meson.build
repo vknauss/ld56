@@ -19,6 +19,8 @@ texture_files = [
   'Bonk4.png',
   'Bonk5.png',
   'Bonk6.png',
+  'DoorClosed.png',
+  'DoorOpen.png',
   'FloorTile.png',
   'GGBackDown1.png',
   'GGBackDown2.png',
