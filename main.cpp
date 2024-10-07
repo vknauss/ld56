@@ -1561,7 +1561,7 @@ int main(int argc, const char** argv)
             .appName = "gubgub",
             .appVersion = 0,
             .windowTitle = "gubgub",
-            .windowWidth = 3 * GameLogic::texelsPerTile * GameLogic::maxTilesHorizontal,
-            .windowHeight = 3 * GameLogic::texelsPerTile * GameLogic::maxTilesVertical,
+            .windowWidth = 2 * GameLogic::texelsPerTile * GameLogic::maxTilesHorizontal,
+            .windowHeight = 2 * GameLogic::texelsPerTile * GameLogic::maxTilesVertical,
         });
 }
