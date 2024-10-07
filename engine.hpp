@@ -11,6 +11,8 @@ namespace eng
     {
         glm::vec2 position = { 0, 0 };
         glm::vec2 scale = { 1, 1 };
+        glm::vec2 minTexCoord = { 0, 0 };
+        glm::vec2 texCoordScale = { 1, 1 };
         float angle = 0.0f;
         uint32_t textureIndex = 0;
         glm::vec4 tintColor = { 1, 1, 1, 1 };

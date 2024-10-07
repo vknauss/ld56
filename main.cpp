@@ -163,6 +163,14 @@ struct InputIcon
     bool completed = false;
 };
 
+struct Text
+{
+    std::string text;
+    glm::vec2 scale = { 1.0, 1.0 };
+    glm::vec4 background = { 0, 0, 0, 0 };
+    glm::vec4 foreground = { 1, 1, 1, 1 };
+};
+
 static constexpr std::pair<int, int> directionCoords(Direction direction)
 {
     switch (direction)
@@ -237,6 +245,7 @@ struct GameLogic final : eng::GameLogicInterface
         std::vector<uint32_t> dotline;
         std::vector<uint32_t> zap;
         uint32_t arrow;
+        uint32_t font;
     } textures;
 
     struct
@@ -253,12 +262,16 @@ struct GameLogic final : eng::GameLogicInterface
     std::deque<uint32_t> freeEntities;
     std::vector<uint32_t> playerEntities;
 
-    static constexpr int animationFramesPerTick = 6;
-    static constexpr double tickInterval = 0.5;
+    static constexpr int animationFramesPerTick = 2;
+    static constexpr int tweenFramesPerTick = 12;
+    static constexpr double tickInterval = 0.25;
     static constexpr double animationFrameInterval = tickInterval / animationFramesPerTick;
+    static constexpr double tweenFrameInterval = tickInterval / tweenFramesPerTick;
     double tickTimer = 0;
     double animationFrameTimer = 0;
+    double tweenFrameTimer = 0;
     int tweenFrame = 0;
+    float tween = 0;
 
     static constexpr int maxTilesVertical = 12;
     static constexpr int maxTilesHorizontal = 20;
@@ -266,6 +279,8 @@ struct GameLogic final : eng::GameLogicInterface
 
     std::deque<InputEvent> inputQueue;
     std::deque<uint32_t> inputSpriteEntities;
+
+    uint32_t textTestEntity;
 
     template<typename ComponentType>
     ComponentArray<ComponentType>& component()
@@ -513,7 +528,6 @@ struct GameLogic final : eng::GameLogicInterface
                             {
                                 enemy.target = { std::numeric_limits<uint32_t>::max(), std::numeric_limits<uint32_t>::max() };
                             }
-                            // TESTING is the cell occupied?
                             else if (std::find_if(cell.occupants.begin(), cell.occupants.end(),
                                         [&](auto oid) { return component<Solid>().has(oid); }) != cell.occupants.end())
                             {
@@ -528,11 +542,7 @@ struct GameLogic final : eng::GameLogicInterface
                 {
                     auto [dx, dy] = directionCoords(enemy.facingDirection);
                     clampDeltaToMap(entity.x, entity.y, dx, dy);
-                    // const auto& cell = map.cells[entity.y + dy][entity.x + dx];
-                    // if (std::find_if(cell.occupants.begin(), cell.occupants.end(), [&](auto oid) { return component<Solid>().has(oid); }) == cell.occupants.end())
-                    // {
-                        moveEntity(id, entity.x + dx, entity.y + dy);
-                    // }
+                    moveEntity(id, entity.x + dx, entity.y + dy);
                 }
                 else
                 {
@@ -552,8 +562,20 @@ struct GameLogic final : eng::GameLogicInterface
                         scan(entity.x, entity.y, scanDirections[i], 0,
                             [&](const Cell& cell, uint32_t distance)
                             {
-                                if (std::find_if(cell.occupants.begin(), cell.occupants.end(),
-                                        [&](auto oid){ return component<PatrolPoint>().has(oid); }) != cell.occupants.end())
+                                bool found = false;
+                                for (auto oid : cell.occupants)
+                                {
+                                    if (component<Solid>().has(oid))
+                                    {
+                                        found = component<Friendly>().has(oid);
+                                        break;
+                                    }
+                                    if (component<PatrolPoint>().has(oid))
+                                    {
+                                        found = true;
+                                    }
+                                }
+                                if (found)
                                 {
                                     if (!anyScanFound || distance < bestDistance)
                                     {
@@ -617,6 +639,7 @@ struct GameLogic final : eng::GameLogicInterface
             resourceLoader.loadTexture("textures/Zap6.png"),
         };
         textures.arrow = resourceLoader.loadTexture("textures/arrow.png");
+        textures.font = resourceLoader.loadTexture("textures/font.png");
 
         sequences.enemy = {
             { Direction::Up, {
@@ -740,6 +763,13 @@ struct GameLogic final : eng::GameLogicInterface
         input.mapKey(directionInputMappings[Direction::Left], glfwGetKeyScancode(GLFW_KEY_A));
         input.mapKey(directionInputMappings[Direction::Down], glfwGetKeyScancode(GLFW_KEY_S));
         input.mapKey(directionInputMappings[Direction::Right], glfwGetKeyScancode(GLFW_KEY_D));
+
+        textTestEntity = createEntity(0, 0);
+        component<Text>().add(textTestEntity) = Text{
+            .text = "hello world",
+            .background = { 0, 0, 0, 1 },
+            .foreground = { 1, 1, 1, 1 },
+        };
     }
 
     void gameTick()
@@ -754,16 +784,19 @@ struct GameLogic final : eng::GameLogicInterface
         {
             destroyEntity(inputSpriteEntities.front());
             inputSpriteEntities.pop_front();
-            for (auto id : inputSpriteEntities)
-            {
-                moveEntity(id, entities[id].x + 1, entities[id].y);
-            }
         }
         if (!inputQueue.empty())
         {
             InputEvent event = inputQueue.front();
             inputQueue.pop_front();
             component<InputIcon>().get(inputSpriteEntities.front()).completed = true;
+            moveEntity(inputSpriteEntities.front(), entities[inputSpriteEntities.front()].x, entities[inputSpriteEntities.front()].y - 1);
+
+            for (uint32_t i = 1; i < inputSpriteEntities.size(); ++i)
+            {
+                auto id = inputSpriteEntities[i];
+                moveEntity(id, entities[id].x + 1, entities[id].y);
+            }
 
             if (!playerEntities.empty())
             {
@@ -876,7 +909,12 @@ struct GameLogic final : eng::GameLogicInterface
             {
                 // inputQueue.clear();
                 inputQueue.push_back(InputEvent { direction });
-                uint32_t id = createEntity(maxTilesHorizontal - 1 - inputSpriteEntities.size(), maxTilesVertical - 1);
+                uint32_t offset = inputSpriteEntities.size();
+                if (!inputSpriteEntities.empty() && component<InputIcon>().get(inputSpriteEntities.front()).completed)
+                {
+                    --offset;
+                }
+                uint32_t id = createEntity(maxTilesHorizontal - 1 - offset, maxTilesVertical - 1);
                 component<Sprite>().add(id) = Sprite{
                     .textureIndex = textures.arrow,
                     .color = { 1, 1, 0, 1 },
@@ -887,9 +925,16 @@ struct GameLogic final : eng::GameLogicInterface
             }
         }
 
+        if (tickTimer >= tickInterval)
+        {
+            gameTick();
+            tickTimer -= tickInterval;
+            tweenFrame = 0;
+        }
+        tickTimer += deltaTime;
+
         if (animationFrameTimer >= animationFrameInterval)
         {
-            ++tweenFrame;
             component<Enemy>().forEach([&](Enemy& enemy, uint32_t id)
             {
                 ++enemy.frame;
@@ -903,17 +948,26 @@ struct GameLogic final : eng::GameLogicInterface
                 }
                 sprite.textureIndex = sequence[enemy.frame];
             });
+
             animationFrameTimer -= animationFrameInterval;
         }
         animationFrameTimer += deltaTime;
 
-        if (tickTimer >= tickInterval)
+        if (tweenFrameTimer >= tweenFrameInterval)
         {
-            gameTick();
-            tickTimer -= tickInterval;
-            tweenFrame = 0;
+            constexpr int tweenEndFrame = tweenFramesPerTick / 2;
+            tween = glm::clamp<float>(static_cast<float>(tweenFrame) / tweenEndFrame, 0, 1);
+            tween = 3 * tween * tween - 2 * tween * tween * tween;
+            tween = std::round(tween * texelsPerTile) / texelsPerTile;
+            ++tweenFrame;
+
+            if (!inputSpriteEntities.empty() && component<InputIcon>().get(inputSpriteEntities.front()).completed)
+            {
+                component<Sprite>().get(inputSpriteEntities.front()).color.a = 1.0f - tween;
+            }
         }
-        tickTimer += deltaTime;
+        tweenFrameTimer += deltaTime;
+
 
         scene.instances().clear();
         for (uint32_t i = 0; i < map.cells.size(); ++i)
@@ -923,7 +977,7 @@ struct GameLogic final : eng::GameLogicInterface
                 if (map.cells[i][j].solid)
                 {
                     scene.instances().push_back(eng::Instance {
-                                .position = glm::vec2(j + 0.5, map.cells.size() - i - 0.5),
+                                .position = glm::vec2(j + 0.5, maxTilesVertical - i - 0.5),
                                 .textureIndex = textures.blank,
                             });
                 }
@@ -933,16 +987,8 @@ struct GameLogic final : eng::GameLogicInterface
         component<Sprite>().forEach([&](const auto& sprite, auto id)
         {
             const auto& entity = entities.at(id);
-            glm::vec2 position(entity.x + 0.5, map.cells.size() - entity.y - 0.5);
-            constexpr int tweenEndFrame = animationFramesPerTick / 2;
-            if (tweenFrame < tweenEndFrame)
-            {
-                float tween = static_cast<float>(tweenFrame) / tweenEndFrame;
-                tween = 3 * tween * tween - 2 * tween * tween * tween;
-                tween = std::round(tween * texelsPerTile) / texelsPerTile;
-                position = glm::mix(glm::vec2(entity.prevx + 0.5, map.cells.size() - entity.prevy - 0.5), position, tween);
-            }
-
+            glm::vec2 position = glm::mix(glm::vec2(entity.prevx + 0.5, maxTilesVertical - entity.prevy - 0.5),
+                    glm::vec2(entity.x + 0.5, maxTilesVertical - entity.y - 0.5), tween);
             scene.instances().push_back(eng::Instance {
                         .position = position,
                         .angle = directionAngle(sprite.direction),
@@ -996,7 +1042,7 @@ struct GameLogic final : eng::GameLogicInterface
                         }
                     }
                     scene.instances().push_back(eng::Instance {
-                                .position = glm::vec2(cell.x + 0.5, map.cells.size() - cell.y - 0.5),
+                                .position = glm::vec2(cell.x + 0.5, maxTilesVertical - cell.y - 0.5),
                                 .angle = angle,
                                 .textureIndex = textureIndex,
                                 .tintColor = tintColor,
@@ -1005,17 +1051,30 @@ struct GameLogic final : eng::GameLogicInterface
                 });
         });
 
-        /* glm::vec2 inputSpritePosition = { maxTilesHorizontal - 0.5, 0.5 };
-        for (const auto& event : inputQueue)
+        component<Text>().forEach([&](const Text& text, uint32_t id)
         {
+            const auto& entity = entities[id];
+            constexpr glm::vec2 texCoordScale = { 1.0f / 16.0f, 1.0f / 8.0f };
             scene.instances().push_back(eng::Instance {
-                    .position = inputSpritePosition,
-                    .angle = directionAngle(event.direction),
-                    .textureIndex = textures.arrow,
-                    .tintColor = { 1, 1, 0, 1 },
+                    .position = { entity.x + 0.25f * text.text.size(), maxTilesVertical - entity.y - 0.5 },
+                    .scale = { text.scale.x * 0.5f * text.text.size(), text.scale.y },
+                    .textureIndex = textures.blank,
+                    .tintColor = text.background,
                 });
-            inputSpritePosition.x -= 1.0f;
-        } */
+            for (uint32_t i = 0; i < text.text.size(); ++i)
+            {
+                glm::vec2 minTexCoord = glm::vec2(text.text[i] / 8, text.text[i] % 8) * texCoordScale;
+                scene.instances().push_back(eng::Instance {
+                        .position = { entity.x + i * 0.5 + 0.25, maxTilesVertical - entity.y - 0.5 },
+                        .scale = { 0.5, 1.0 },
+                        .minTexCoord = minTexCoord,
+                        .texCoordScale = texCoordScale,
+                        .textureIndex = textures.font,
+                        .tintColor = text.foreground,
+                    });
+            }
+        });
+
 
         const auto [framebufferWidth, framebufferHeight] = scene.framebufferSize();
         const float aspectRatio = static_cast<float>(framebufferWidth) / static_cast<float>(framebufferHeight);

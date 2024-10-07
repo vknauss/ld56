@@ -26,6 +26,7 @@ texture_files = [
   'Zap6.png',
   'arrow.png',
   'blank.png',
+  'font.png',
 ]
 
 foreach file : texture_files

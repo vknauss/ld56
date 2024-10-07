@@ -360,8 +360,8 @@ void Renderer::updateFrame(const std::vector<Instance>& instances, const glm::ma
     {
         writeData(writePointer, instance.position);
         writeData(writePointer, instance.scale);
-        writeData(writePointer, glm::vec2(0, 0));
-        writeData(writePointer, glm::vec2(1, 1));
+        writeData(writePointer, instance.minTexCoord);
+        writeData(writePointer, instance.texCoordScale);
         writeData(writePointer, glm::vec2(glm::cos(instance.angle), glm::sin(instance.angle)));
         writeData(writePointer, instance.textureIndex);
         writeData(writePointer, 0.0f); // padding
