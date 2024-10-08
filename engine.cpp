@@ -11,6 +11,7 @@
 #include <stdexcept>
 #include <sstream>
 #include <vector>
+#include "config.h"
 
 using namespace eng;
 
@@ -101,8 +102,10 @@ static auto createInstance(const vk::raii::Context& context, const ApplicationIn
     return vk::raii::Instance(context, vk::InstanceCreateInfo {
             .flags = vk::InstanceCreateFlagBits::eEnumeratePortabilityKHR,
             .pApplicationInfo = &instanceApplicationInfo,
+#ifdef USE_VALIDATION_LAYERS
             .enabledLayerCount = validationLayers.size(),
             .ppEnabledLayerNames = validationLayers.data(),
+#endif
             .enabledExtensionCount = static_cast<uint32_t>(extensionNames.size()),
             .ppEnabledExtensionNames = extensionNames.data(),
         });

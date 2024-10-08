@@ -12,6 +12,11 @@ vma_dep = cmake.subproject('VulkanMemoryAllocator-Hpp').dependency('VulkanMemory
 vma_hpp_dep = cmake.subproject('VulkanMemoryAllocator-Hpp').dependency('VulkanMemoryAllocator-Hpp')
 glfw_dep = cmake.subproject('glfw').dependency('glfw')
 
+configure_file(output: 'config.h',
+  configuration: {
+    'USE_VALIDATION_LAYERS': get_option('use_validation_layers'),
+  })
+
 executable('gubgub',
   dependencies: [
     dependency('glm'),
